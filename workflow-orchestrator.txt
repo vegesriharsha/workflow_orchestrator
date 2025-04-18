@@ -1,0 +1,2704 @@
+### 7. Controllers
+
+Let's implement the REST API controllers for the workflow orchestrator.
+
+**WorkflowController.java**
+```java
+package com.example.workfloworchestrator.controller;
+
+import com.example.workfloworchestrator.model.WorkflowDefinition;
+import com.example.workfloworchestrator.service.WorkflowService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import jakarta.validation.Valid;
+import java.util.List;
+
+/**
+ * REST controller for workflow definition operations
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/workflows")
+@RequiredArgsConstructor
+public class WorkflowController {
+    
+    private final WorkflowService workflowService;
+    
+    @GetMapping
+    public ResponseEntity<List<WorkflowDefinition>> getAllWorkflowDefinitions() {
+        return ResponseEntity.ok(workflowService.getAllWorkflowDefinitions());
+    }
+    
+    @GetMapping("/{id}")
+    public ResponseEntity<WorkflowDefinition> getWorkflowDefinition(@PathVariable Long id) {
+        return workflowService.getWorkflowDefinition(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+    
+    @GetMapping("/name/{name}")
+    public ResponseEntity<WorkflowDefinition> getLatestWorkflowDefinition(@PathVariable String name) {
+        return workflowService.getLatestWorkflowDefinition(name)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+    
+    @GetMapping("/name/{name}/version/{version}")
+    public ResponseEntity<WorkflowDefinition> getWorkflowDefinitionByNameAndVersion(
+            @PathVariable String name, @PathVariable String version) {
+        return workflowService.getWorkflowDefinition(name, version)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+    
+    @PostMapping
+    public ResponseEntity<WorkflowDefinition> createWorkflowDefinition(
+            @Valid @RequestBody WorkflowDefinition workflowDefinition) {
+        return new ResponseEntity<>(
+                workflowService.createWorkflowDefinition(workflowDefinition), 
+                HttpStatus.CREATED);
+    }
+    
+    @PutMapping("/{id}")
+    public ResponseEntity<WorkflowDefinition> updateWorkflowDefinition(
+            @PathVariable Long id, @Valid @RequestBody WorkflowDefinition workflowDefinition) {
+        return ResponseEntity.ok(workflowService.updateWorkflowDefinition(id, workflowDefinition));
+    }
+    
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteWorkflowDefinition(@PathVariable Long id) {
+        workflowService.deleteWorkflowDefinition(id);
+        return ResponseEntity.noContent().build();
+    }
+}
+```
+
+**WorkflowExecutionController.java**
+```java
+package com.example.workfloworchestrator.controller;
+
+import com.example.workfloworchestrator.model.WorkflowExecution;
+import com.example.workfloworchestrator.model.WorkflowStatus;
+import com.example.workfloworchestrator.service.WorkflowExecutionService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * REST controller for workflow execution operations
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/executions")
+@RequiredArgsConstructor
+public class WorkflowExecutionController {
+    
+    private final WorkflowExecutionService workflowExecutionService;
+    
+    @PostMapping("/start")
+    public ResponseEntity<WorkflowExecution> startWorkflow(
+            @RequestParam String workflowName,
+            @RequestParam(required = false) String version,
+            @RequestBody(required = false) Map<String, String> variables) {
+        
+        WorkflowExecution execution = workflowExecutionService.startWorkflow(
+                workflowName, version, variables != null ? variables : Map.of());
+        
+        return new ResponseEntity<>(execution, HttpStatus.CREATED);
+    }
+    
+    @GetMapping("/{id}")
+    public ResponseEntity<WorkflowExecution> getWorkflowExecution(@PathVariable Long id) {
+        return ResponseEntity.ok(workflowExecutionService.getWorkflowExecution(id));
+    }
+    
+    @GetMapping("/correlation/{correlationId}")
+    public ResponseEntity<WorkflowExecution> getWorkflowExecutionByCorrelationId(
+            @PathVariable String correlationId) {
+        return ResponseEntity.ok(
+                workflowExecutionService.getWorkflowExecutionByCorrelationId(correlationId));
+    }
+    
+    @GetMapping
+    public ResponseEntity<List<WorkflowExecution>> getWorkflowExecutionsByStatus(
+            @RequestParam(required = false) WorkflowStatus status) {
+        
+        if (status != null) {
+            return ResponseEntity.ok(workflowExecutionService.getWorkflowExecutionsByStatus(status));
+        } else {
+            return ResponseEntity.ok(workflowExecutionService.getAllWorkflowExecutions());
+        }
+    }
+    
+    @PostMapping("/{id}/pause")
+    public ResponseEntity<WorkflowExecution> pauseWorkflowExecution(@PathVariable Long id) {
+        return ResponseEntity.ok(workflowExecutionService.pauseWorkflowExecution(id));
+    }
+    
+    @PostMapping("/{id}/resume")
+    public ResponseEntity<WorkflowExecution> resumeWorkflowExecution(@PathVariable Long id) {
+        return ResponseEntity.ok(workflowExecutionService.resumeWorkflowExecution(id));
+    }
+    
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<WorkflowExecution> cancelWorkflowExecution(@PathVariable Long id) {
+        return ResponseEntity.ok(workflowExecutionService.cancelWorkflowExecution(id));
+    }
+    
+    @PostMapping("/{id}/retry")
+    public ResponseEntity<WorkflowExecution> retryWorkflowExecution(@PathVariable Long id) {
+        return ResponseEntity.ok(workflowExecutionService.retryWorkflowExecution(id));
+    }
+    
+    @PostMapping("/{id}/retry-subset")
+    public ResponseEntity<WorkflowExecution> retryWorkflowExecutionSubset(
+            @PathVariable Long id, @RequestBody List<Long> taskIds) {
+        return ResponseEntity.ok(workflowExecutionService.retryWorkflowExecutionSubset(id, taskIds));
+    }
+}
+```
+
+**UserReviewController.java**
+```java
+package com.example.workfloworchestrator.controller;
+
+import com.example.workfloworchestrator.model.UserReviewPoint;
+import com.example.workfloworchestrator.model.WorkflowExecution;
+import com.example.workfloworchestrator.service.UserReviewService;
+import lombok.Data;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+/**
+ * REST controller for user review operations
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/reviews")
+@RequiredArgsConstructor
+public class UserReviewController {
+    
+    private final UserReviewService userReviewService;
+    
+    @PostMapping("/{reviewPointId}")
+    public ResponseEntity<WorkflowExecution> submitReview(
+            @PathVariable Long reviewPointId,
+            @RequestBody ReviewRequest request) {
+        
+        return ResponseEntity.ok(userReviewService.submitUserReview(
+                reviewPointId, 
+                request.getDecision(), 
+                request.getReviewer(), 
+                request.getComment()));
+    }
+    
+    @Data
+    public static class ReviewRequest {
+        private UserReviewPoint.ReviewDecision decision;
+        private String reviewer;
+        private String comment;
+    }
+}
+```
+
+### 8. Utilities
+
+Now let's implement the utility classes for workflow versioning and retry handling.
+
+**WorkflowVersioning.java**
+```java
+package com.example.workfloworchestrator.util;
+
+import com.example.workfloworchestrator.repository.WorkflowDefinitionRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Utility for workflow definition versioning
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class WorkflowVersioning {
+    
+    private final WorkflowDefinitionRepository workflowDefinitionRepository;
+    private static final Pattern VERSION_PATTERN = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)");
+    
+    /**
+     * Generate the next version number for a workflow
+     * Uses semantic versioning: MAJOR.MINOR.PATCH
+     * 
+     * @param workflowName the workflow name
+     * @return the next version number
+     */
+    public String generateNextVersion(String workflowName) {
+        List<String> versions = workflowDefinitionRepository.findByNameOrderByVersionDesc(workflowName)
+                .stream()
+                .map(wd -> wd.getVersion())
+                .toList();
+        
+        if (versions.isEmpty()) {
+            // First version
+            return "1.0.0";
+        }
+        
+        // Get the latest version
+        String latestVersion = versions.get(0);
+        
+        // Parse version
+        Matcher matcher = VERSION_PATTERN.matcher(latestVersion);
+        
+        if (matcher.matches()) {
+            int major = Integer.parseInt(matcher.group(1));
+            int minor = Integer.parseInt(matcher.group(2));
+            int patch = Integer.parseInt(matcher.group(3));
+            
+            // Increment patch version
+            patch++;
+            
+            return String.format("%d.%d.%d", major, minor, patch);
+        } else {
+            // If version doesn't match pattern, start with 1.0.0
+            return "1.0.0";
+        }
+    }
+    
+    /**
+     * Increment the major version number
+     * 
+     * @param version the current version
+     * @return the next major version
+     */
+    public String incrementMajorVersion(String version) {
+        Matcher matcher = VERSION_PATTERN.matcher(version);
+        
+        if (matcher.matches()) {
+            int major = Integer.parseInt(matcher.group(1));
+            
+            // Increment major version, reset others
+            major++;
+            
+            return String.format("%d.0.0", major);
+        } else {
+            return "1.0.0";
+        }
+    }
+    
+    /**
+     * Increment the minor version number
+     * 
+     * @param version the current version
+     * @return the next minor version
+     */
+    public String incrementMinorVersion(String version) {
+        Matcher matcher = VERSION_PATTERN.matcher(version);
+        
+        if (matcher.matches()) {
+            int major = Integer.parseInt(matcher.group(1));
+            int minor = Integer.parseInt(matcher.group(2));
+            
+            // Increment minor version, reset patch
+            minor++;
+            
+            return String.format("%d.%d.0", major, minor);
+        } else {
+            return "1.0.0";
+        }
+    }
+}
+```
+
+**RetryUtil.java**
+```java
+package com.example.workfloworchestrator.util;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+
+/**
+ * Utility for handling retries with exponential backoff
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class RetryUtil {
+    
+    @Value("${workflow.task.retry.initial-interval:1000}")
+    private long initialIntervalMs;
+    
+    @Value("${workflow.task.retry.multiplier:2.0}")
+    private double multiplier;
+    
+    @Value("${workflow.task.retry.max-interval:3600000}") // 1 hour max
+    private long maxIntervalMs;
+    
+    /**
+     * Calculate the next retry time using exponential backoff
+     * 
+     * @param retryCount the current retry count
+     * @return the next retry time
+     */
+    public LocalDateTime calculateNextRetryTime(int retryCount) {
+        long delayMs = calculateExponentialBackoff(retryCount);
+        return LocalDateTime.now().plusNanos(delayMs * 1_000_000);
+    }
+    
+    /**
+     * Calculate the delay for exponential backoff
+     * 
+     * @param retryCount the current retry count
+     * @return the delay in milliseconds
+     */
+    public long calculateExponentialBackoff(int retryCount) {
+        // Calculate exponential backoff with jitter
+        double exponentialPart = Math.pow(multiplier, retryCount);
+        long delay = (long) (initialIntervalMs * exponentialPart);
+        
+        // Add some randomness (jitter) to avoid stampeding herds
+        double jitter = 0.25; // 25% jitter
+        double randomFactor = 1.0 + Math.random() * jitter;
+        delay = (long) (delay * randomFactor);
+        
+        // Cap at max interval
+        return Math.min(delay, maxIntervalMs);
+    }
+}
+```
+
+### 9. Scheduling
+
+Let's implement schedulers for workflow monitoring and task retries.
+
+**WorkflowScheduler.java**
+```java
+package com.example.workfloworchestrator.engine.scheduler;
+
+import com.example.workfloworchestrator.engine.WorkflowEngine;
+import com.example.workfloworchestrator.model.WorkflowExecution;
+import com.example.workfloworchestrator.model.WorkflowStatus;
+import com.example.workfloworchestrator.service.WorkflowExecutionService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * Scheduler for monitoring workflow executions
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class WorkflowScheduler {
+    
+    private final WorkflowExecutionService workflowExecutionService;
+    private final WorkflowEngine workflowEngine;
+    
+    /**
+     * Check for stuck workflows every 5 minutes
+     */
+    @Scheduled(fixedRateString = "${workflow.scheduler.stuck-workflows-check-interval:300000}")
+    public void checkStuckWorkflows() {
+        log.info("Checking for stuck workflows");
+        
+        // Find workflows that have been running for too long (e.g., 30 minutes)
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(30);
+        List<WorkflowExecution> stuckWorkflows = workflowExecutionService.getStuckWorkflowExecutions(threshold);
+        
+        log.info("Found {} stuck workflows", stuckWorkflows.size());
+        
+        // Handle stuck workflows
+        for (WorkflowExecution execution : stuckWorkflows) {
+            log.warn("Workflow {} is stuck in status {} since {}", 
+                    execution.getId(), execution.getStatus(), execution.getStartedAt());
+            
+            // Update status to FAILED
+            execution.setErrorMessage("Workflow execution timed out");
+            workflowExecutionService.updateWorkflowExecutionStatus(execution.getId(), WorkflowStatus.FAILED);
+        }
+    }
+    
+    /**
+     * Clean up old workflow executions periodically (e.g., once a day)
+     */
+    @Scheduled(cron = "${workflow.scheduler.cleanup-cron:0 0 0 * * ?}")
+    public void cleanupOldWorkflowExecutions() {
+        log.info("Cleaning up old workflow executions");
+        
+        // Implement cleanup logic for completed/failed workflows older than X days
+        // This can be customized based on retention requirements
+    }
+}
+```
+
+**RetryScheduler.java**
+```java
+package com.example.workfloworchestrator.engine.scheduler;
+
+import com.example.workfloworchestrator.engine.WorkflowEngine;
+import com.example.workfloworchestrator.model.TaskExecution;
+import com.example.workfloworchestrator.model.TaskStatus;
+import com.example.workfloworchestrator.service.TaskExecutionService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * Scheduler for handling task retries
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class RetryScheduler {
+    
+    private final TaskExecutionService taskExecutionService;
+    private final WorkflowEngine workflowEngine;
+    
+    /**
+     * Check for tasks to retry every 10 seconds
+     */
+    @Scheduled(fixedRateString = "${workflow.scheduler.retry-check-interval:10000}")
+    public void retryFailedTasks() {
+        log.debug("Checking for tasks to retry");
+        
+        // Find tasks that are scheduled for retry and are ready
+        List<TaskExecution> tasksToRetry = taskExecutionService.getTasksToRetry(LocalDateTime.now());
+        
+        if (!tasksToRetry.isEmpty()) {
+            log.info("Found {} tasks to retry", tasksToRetry.size());
+            
+            // Process each task
+            for (TaskExecution taskExecution : tasksToRetry) {
+                log.info("Retrying task {}, attempt {}", 
+                        taskExecution.getId(), taskExecution.getRetryCount());
+                
+                // Update status to PENDING for retry
+                taskExecution.setStatus(TaskStatus.PENDING);
+                taskExecution.setStartedAt(null);
+                taskExecution.setCompletedAt(null);
+                taskExecutionService.saveTaskExecution(taskExecution);
+                
+                // Execute the task again
+                taskExecutionService.executeTask(taskExecution.getId());
+            }
+        }
+    }
+}
+```
+
+### 10. Exception Handling
+
+Finally, let's implement the exception handling classes.
+
+**WorkflowException.java**
+```java
+package com.example.workfloworchestrator.exception;
+
+/**
+ * Exception for workflow-related errors
+ */
+public class WorkflowException extends RuntimeException {
+    
+    public WorkflowException(String message) {
+        super(message);
+    }
+    
+    public WorkflowException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+```
+
+**TaskExecutionException.java**
+```java
+package com.example.workfloworchestrator.exception;
+
+/**
+ * Exception for task execution errors
+ */
+public class TaskExecutionException extends RuntimeException {
+    
+    public TaskExecutionException(String message) {
+        super(message);
+    }
+    
+    public TaskExecutionException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+```
+
+**GlobalExceptionHandler.java**
+```java
+package com.example.workfloworchestrator.exception;
+
+import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+
+import java.time.LocalDateTime;
+
+/**
+ * Global exception handler for API errors
+ */
+@Slf4j
+@ControllerAdvice
+public class GlobalExceptionHandler {
+    
+    @ExceptionHandler(WorkflowException.class)
+    public ResponseEntity<ErrorResponse> handleWorkflowException(WorkflowException ex) {
+        log.error("Workflow exception", ex);
+        
+        ErrorResponse response = new ErrorResponse();
+        response.setTimestamp(LocalDateTime.now());
+        response.setStatus(HttpStatus.BAD_REQUEST.value());
+        response.setError("Workflow Error");
+        response.setMessage(ex.getMessage());
+        
+        return new ResponseEntity<>(response, HttpStatus.BAD_REQUEST);
+    }
+    
+    @ExceptionHandler(TaskExecutionException.class)
+    public ResponseEntity<ErrorResponse> handleTaskExecutionException(TaskExecutionException ex) {
+        log.error("Task execution exception", ex);
+        
+        ErrorResponse response = new ErrorResponse();
+        response.setTimestamp(LocalDateTime.now());
+        response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+        response.setError("Task Execution Error");
+        response.setMessage(ex.getMessage());
+        
+        return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ErrorResponse> handleGenericException(Exception ex) {
+        log.error("Unexpected exception", ex);
+        
+        ErrorResponse response = new ErrorResponse();
+        response.setTimestamp(LocalDateTime.now());
+        response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+        response.setError("Server Error");
+        response.setMessage("An unexpected error occurred");
+        
+        return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    
+    @Data
+    public static class ErrorResponse {
+        private LocalDateTime timestamp;
+        private int status;
+        private String error;
+        private String message;
+    }
+}**ConditionalExecutionStrategy.java**
+```java
+package com.example.workfloworchestrator.engine.strategy;
+
+import com.example.workfloworchestrator.exception.WorkflowException;
+import com.example.workfloworchestrator.model.*;
+import com.example.workfloworchestrator.service.TaskExecutionService;
+import com.example.workfloworchestrator.service.WorkflowExecutionService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.expression.Expression;
+import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
+import org.springframework.expression.spel.support.StandardEvaluationContext;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Conditional execution strategy
+ * Determines the next task based on conditions
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class ConditionalExecutionStrategy implements ExecutionStrategy {
+    
+    private final TaskExecutionService taskExecutionService;
+    private final WorkflowExecutionService workflowExecutionService;
+    private final SequentialExecutionStrategy sequentialStrategy;
+    
+    private final ExpressionParser expressionParser = new SpelExpressionParser();
+    
+    @Override
+    @Transactional
+    public CompletableFuture<WorkflowStatus> execute(WorkflowExecution workflowExecution) {
+        CompletableFuture<WorkflowStatus> resultFuture = new CompletableFuture<>();
+        
+        try {
+            WorkflowDefinition definition = workflowExecution.getWorkflowDefinition();
+            List<TaskDefinition> allTasks = definition.getTasks();
+            
+            // Find starting task(s)
+            List<TaskDefinition> startTasks = findStartTasks(allTasks);
+            
+            if (startTasks.isEmpty()) {
+                throw new WorkflowException("No start tasks found in workflow");
+            }
+            
+            // Execute the start tasks
+            executeConditionalPath(workflowExecution, startTasks, allTasks, resultFuture);
+            
+        } catch (Exception e) {
+            log.error("Error in conditional execution strategy", e);
+            resultFuture.complete(WorkflowStatus.FAILED);
+        }
+        
+        return resultFuture;
+    }
+    
+    @Override
+    @Transactional
+    public CompletableFuture<WorkflowStatus> executeSubset(WorkflowExecution workflowExecution, List<Long> taskIds) {
+        // For subset execution, we'll delegate to sequential strategy for simplicity
+        return sequentialStrategy.executeSubset(workflowExecution, taskIds);
+    }
+    
+    private List<TaskDefinition> findStartTasks(List<TaskDefinition> allTasks) {
+        // Start tasks are those with the lowest execution order
+        if (allTasks.isEmpty()) {
+            return Collections.emptyList();
+        }
+        
+        // Find the minimum execution order
+        int minOrder = allTasks.stream()
+                .map(task -> task.getExecutionOrder() != null ? task.getExecutionOrder() : 0)
+                .min(Integer::compareTo)
+                .orElse(0);
+        
+        // Return all tasks with that order
+        return allTasks.stream()
+                .filter(task -> {
+                    int order = task.getExecutionOrder() != null ? task.getExecutionOrder() : 0;
+                    return order == minOrder;
+                })
+                .toList();
+    }
+    
+    private void executeConditionalPath(WorkflowExecution workflowExecution,
+                                      List<TaskDefinition> currentTasks,
+                                      List<TaskDefinition> allTasks,
+                                      CompletableFuture<WorkflowStatus> resultFuture) {
+        
+        if (currentTasks.isEmpty()) {
+            // No more tasks to execute, workflow is complete
+            resultFuture.complete(WorkflowStatus.COMPLETED);
+            return;
+        }
+        
+        // Execute current tasks sequentially
+        executeTaskSequence(workflowExecution, currentTasks, 0, allTasks, resultFuture);
+    }
+    
+    private void executeTaskSequence(WorkflowExecution workflowExecution,
+                                   List<TaskDefinition> tasks,
+                                   int index,
+                                   List<TaskDefinition> allTasks,
+                                   CompletableFuture<WorkflowStatus> resultFuture) {
+        
+        if (index >= tasks.size()) {
+            // All tasks completed, determine next tasks based on conditions
+            List<TaskDefinition> nextTasks = determineNextTasks(workflowExecution, tasks, allTasks);
+            executeConditionalPath(workflowExecution, nextTasks, allTasks, resultFuture);
+            return;
+        }
+        
+        // Get current task to execute
+        TaskDefinition taskDefinition = tasks.get(index);
+        
+        // Prepare inputs from workflow variables
+        Map<String, String> inputs = new HashMap<>(workflowExecution.getVariables());
+        
+        // Create task execution
+        TaskExecution taskExecution = taskExecutionService.createTaskExecution(
+                workflowExecution, taskDefinition, inputs);
+        
+        // Check if task requires user review
+        if (taskDefinition.isRequireUserReview()) {
+            // Move workflow to await review
+            workflowExecutionService.updateWorkflowExecutionStatus(
+                    workflowExecution.getId(), WorkflowStatus.AWAITING_USER_REVIEW);
+            
+            // Create review point
+            taskExecutionService.createUserReviewPoint(taskExecution.getId());
+            
+            // The workflow execution will be resumed when the review is submitted
+            resultFuture.complete(WorkflowStatus.AWAITING_USER_REVIEW);
+            return;
+        }
+        
+        // Execute the task
+        CompletableFuture<TaskExecution> taskFuture = taskExecutionService.executeTask(taskExecution.getId());
+        
+        taskFuture.whenComplete((completedTask, throwable) -> {
+            try {
+                if (throwable != null) {
+                    handleTaskFailure(workflowExecution, taskExecution, throwable, tasks, index, allTasks, resultFuture);
+                    return;
+                }
+                
+                // Check task status
+                if (completedTask.getStatus() == TaskStatus.COMPLETED) {
+                    // Update workflow variables with task outputs
+                    Map<String, String> variables = workflowExecution.getVariables();
+                    variables.putAll(completedTask.getOutputs());
+                    workflowExecution.setVariables(variables);
+                    workflowExecutionService.save(workflowExecution);
+                    
+                    // Continue with next task in the sequence
+                    executeTaskSequence(workflowExecution, tasks, index + 1, allTasks, resultFuture);
+                } else if (completedTask.getStatus() == TaskStatus.FAILED) {
+                    handleTaskFailure(workflowExecution, completedTask, 
+                            new TaskExecutionException(completedTask.getErrorMessage()), 
+                            tasks, index, allTasks, resultFuture);
+                } else if (completedTask.getStatus() == TaskStatus.AWAITING_RETRY) {
+                    // Task will be retried later, so we wait
+                    resultFuture.complete(WorkflowStatus.RUNNING);
+                } else {
+                    // Other statuses like SKIPPED, CANCELLED, etc.
+                    // Just continue with next task
+                    executeTaskSequence(workflowExecution, tasks, index + 1, allTasks, resultFuture);
+                }
+            } catch (Exception e) {
+                log.error("Error processing task completion", e);
+                resultFuture.complete(WorkflowStatus.FAILED);
+            }
+        });
+    }
+    
+    private void handleTaskFailure(WorkflowExecution workflowExecution,
+                                 TaskExecution taskExecution,
+                                 Throwable throwable,
+                                 List<TaskDefinition> currentTasks,
+                                 int currentIndex,
+                                 List<TaskDefinition> allTasks,
+                                 CompletableFuture<WorkflowStatus> resultFuture) {
+        
+        log.error("Task execution failed", throwable);
+        
+        // Check if there's a next task on failure defined
+        TaskDefinition taskDefinition = taskExecution.getTaskDefinition();
+        Long nextTaskOnFailure = taskDefinition.getNextTaskOnFailure();
+        
+        if (nextTaskOnFailure != null) {
+            // Find the next task on failure
+            Optional<TaskDefinition> nextTask = allTasks.stream()
+                    .filter(t -> t.getId().equals(nextTaskOnFailure))
+                    .findFirst();
+            
+            if (nextTask.isPresent()) {
+                // Update error message
+                workflowExecution.setErrorMessage("Task failed: " + 
+                        (throwable.getMessage() != null ? throwable.getMessage() : "Unknown error"));
+                workflowExecutionService.save(workflowExecution);
+                
+                // Continue with the failure path
+                executeConditionalPath(workflowExecution, List.of(nextTask.get()), allTasks, resultFuture);
+                return;
+            }
+        }
+        
+        // No specific error handling, fail the workflow
+        workflowExecution.setErrorMessage("Task failed: " + 
+                (throwable.getMessage() != null ? throwable.getMessage() : "Unknown error"));
+        workflowExecutionService.save(workflowExecution);
+        
+        resultFuture.complete(WorkflowStatus.FAILED);
+    }
+    
+    private List<TaskDefinition> determineNextTasks(WorkflowExecution workflowExecution,
+                                                  List<TaskDefinition> completedTasks,
+                                                  List<TaskDefinition> allTasks) {
+        
+        List<TaskDefinition> nextTasks = new ArrayList<>();
+        
+        // Check for explicit next tasks via nextTaskOnSuccess
+        for (TaskDefinition completedTask : completedTasks) {
+            Long nextTaskId = completedTask.getNextTaskOnSuccess();
+            
+            if (nextTaskId != null) {
+                // Find the next task
+                allTasks.stream()
+                        .filter(t -> t.getId().equals(nextTaskId))
+                        .findFirst()
+                        .ifPresent(nextTasks::add);
+            }
+        }
+        
+        // If no explicit next tasks, evaluate conditional expressions
+        if (nextTasks.isEmpty()) {
+            for (TaskDefinition task : allTasks) {
+                String condition = task.getConditionalExpression();
+                
+                // Skip tasks already executed
+                if (completedTasks.contains(task)) {
+                    continue;
+                }
+                
+                if (condition != null && !condition.isEmpty()) {
+                    boolean conditionMet = evaluateCondition(condition, workflowExecution.getVariables());
+                    
+                    if (conditionMet) {
+                        nextTasks.add(task);
+                    }
+                }
+            }
+        }
+        
+        return nextTasks;
+    }
+    
+    private boolean evaluateCondition(String conditionExpression, Map<String, String> variables) {
+        try {
+            StandardEvaluationContext context = new StandardEvaluationContext();
+            
+            // Add variables to context
+            for (Map.Entry<String, String> entry : variables.entrySet()) {
+                context.setVariable(entry.getKey(), entry.getValue());
+            }
+            
+            // Parse and evaluate the expression
+            Expression expression = expressionParser.parseExpression(conditionExpression);
+            Object result = expression.getValue(context);
+            
+            // Convert result to boolean
+            if (result instanceof Boolean) {
+                return (Boolean) result;
+            } else if (result != null) {
+                return Boolean.parseBoolean(result.toString());
+            }
+            
+            return false;
+        } catch (Exception e) {
+            log.error("Error evaluating condition: {}", conditionExpression, e);
+            return false;
+        }
+    }
+}
+```
+
+**TaskMessage.java**
+```java
+package com.example.workfloworchestrator.messaging;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.io.Serializable;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Message for task execution via RabbitMQ
+ */
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class TaskMessage implements Serializable {
+    
+    private Long taskExecutionId;
+    private String correlationId;
+    private String taskType;
+    private Map<String, String> inputs = new HashMap<>();
+    private Map<String, String> configuration = new HashMap<>();
+    private Map<String, String> outputs = new HashMap<>();
+    private boolean success = false;
+    private String errorMessage;
+}
+```
+
+**RabbitMQSender.java**
+```java
+package com.example.workfloworchestrator.messaging;
+
+import com.example.workfloworchestrator.config.RabbitMQConfig;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.stereotype.Component;
+
+/**
+ * Component for sending messages to RabbitMQ
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class RabbitMQSender {
+    
+    private final RabbitTemplate rabbitTemplate;
+    
+    /**
+     * Send a task message to the default task queue
+     */
+    public void sendTaskMessage(TaskMessage message) {
+        log.info("Sending task message to queue: {}, taskType: {}, correlationId: {}", 
+                RabbitMQConfig.TASK_QUEUE, message.getTaskType(), message.getCorrelationId());
+        
+        rabbitTemplate.convertAndSend(
+                RabbitMQConfig.TASK_EXCHANGE, 
+                RabbitMQConfig.TASK_ROUTING_KEY, 
+                message);
+    }
+    
+    /**
+     * Send a task result message to the default result queue
+     */
+    public void sendTaskResultMessage(TaskMessage resultMessage) {
+        log.info("Sending task result message to queue: {}, taskType: {}, correlationId: {}, success: {}", 
+                RabbitMQConfig.WORKFLOW_RESULT_QUEUE, 
+                resultMessage.getTaskType(), 
+                resultMessage.getCorrelationId(),
+                resultMessage.isSuccess());
+        
+        rabbitTemplate.convertAndSend(
+                RabbitMQConfig.WORKFLOW_RESULT_EXCHANGE, 
+                RabbitMQConfig.WORKFLOW_RESULT_ROUTING_KEY, 
+                resultMessage);
+    }
+    
+    /**
+     * Send a message to a specific exchange and routing key
+     */
+    public void sendMessage(String exchange, String routingKey, Object message) {
+        log.info("Sending message to exchange: {}, routingKey: {}", exchange, routingKey);
+        
+        rabbitTemplate.convertAndSend(exchange, routingKey, message);
+    }
+}
+```
+
+**RabbitMQReceiver.java**
+```java
+package com.example.workfloworchestrator.messaging;
+
+import com.example.workfloworchestrator.config.RabbitMQConfig;
+import com.example.workfloworchestrator.engine.executor.RabbitMQTaskExecutor;
+import com.example.workfloworchestrator.service.TaskExecutionService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Component for receiving messages from RabbitMQ
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class RabbitMQReceiver {
+    
+    private final TaskExecutionService taskExecutionService;
+    private final RabbitMQTaskExecutor rabbitMQTaskExecutor;
+    
+    /**
+     * Receive task result message from the result queue
+     */
+    @RabbitListener(queues = RabbitMQConfig.WORKFLOW_RESULT_QUEUE)
+    public void receiveTaskResult(TaskMessage resultMessage) {
+        log.info("Received task result message from queue: {}, taskType: {}, correlationId: {}, success: {}", 
+                RabbitMQConfig.WORKFLOW_RESULT_QUEUE, 
+                resultMessage.getTaskType(), 
+                resultMessage.getCorrelationId(),
+                resultMessage.isSuccess());
+        
+        try {
+            Long taskExecutionId = resultMessage.getTaskExecutionId();
+            
+            if (taskExecutionId != null) {
+                // Update task execution with result
+                if (resultMessage.isSuccess()) {
+                    taskExecutionService.completeTaskExecution(
+                            taskExecutionId, resultMessage.getOutputs());
+                } else {
+                    taskExecutionService.failTaskExecution(
+                            taskExecutionId, resultMessage.getErrorMessage());
+                }
+            } else {
+                // Task execution ID not available, use correlation ID for mapping
+                String correlationId = resultMessage.getCorrelationId();
+                
+                if (correlationId != null) {
+                    // Convert outputs from string map to object map for the RabbitMQTaskExecutor
+                    Map<String, Object> outputs = new HashMap<>();
+                    outputs.putAll(resultMessage.getOutputs());
+                    outputs.put("success", resultMessage.isSuccess());
+                    
+                    if (!resultMessage.isSuccess() && resultMessage.getErrorMessage() != null) {
+                        outputs.put("error", resultMessage.getErrorMessage());
+                    }
+                    
+                    // Handle the response
+                    rabbitMQTaskExecutor.handleResponse(correlationId, outputs);
+                } else {
+                    log.error("Neither taskExecutionId nor correlationId is available in result message");
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error processing task result message", e);
+        }
+    }
+}**ExecutionStrategy.java**
+```java
+package com.example.workfloworchestrator.engine.strategy;
+
+import com.example.workfloworchestrator.model.WorkflowExecution;
+import com.example.workfloworchestrator.model.WorkflowStatus;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Interface for workflow execution strategies
+ */
+public interface ExecutionStrategy {
+    
+    /**
+     * Execute the entire workflow
+     * 
+     * @param workflowExecution the workflow execution to process
+     * @return CompletableFuture with the final workflow status
+     */
+    CompletableFuture<WorkflowStatus> execute(WorkflowExecution workflowExecution);
+    
+    /**
+     * Execute a subset of tasks in the workflow
+     * 
+     * @param workflowExecution the workflow execution
+     * @param taskIds the IDs of tasks to execute
+     * @return CompletableFuture with the final workflow status
+     */
+    CompletableFuture<WorkflowStatus> executeSubset(WorkflowExecution workflowExecution, List<Long> taskIds);
+}
+```
+
+**SequentialExecutionStrategy.java**
+```java
+package com.example.workfloworchestrator.engine.strategy;
+
+import com.example.workfloworchestrator.exception.TaskExecutionException;
+import com.example.workfloworchestrator.exception.WorkflowException;
+import com.example.workfloworchestrator.model.*;
+import com.example.workfloworchestrator.service.TaskExecutionService;
+import com.example.workfloworchestrator.service.WorkflowExecutionService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Sequential execution strategy
+ * Executes tasks one after another in order
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class SequentialExecutionStrategy implements ExecutionStrategy {
+    
+    private final TaskExecutionService taskExecutionService;
+    private final WorkflowExecutionService workflowExecutionService;
+    
+    @Override
+    @Transactional
+    public CompletableFuture<WorkflowStatus> execute(WorkflowExecution workflowExecution) {
+        CompletableFuture<WorkflowStatus> resultFuture = new CompletableFuture<>();
+        
+        try {
+            WorkflowDefinition definition = workflowExecution.getWorkflowDefinition();
+            List<TaskDefinition> taskDefinitions = definition.getTasks();
+            
+            // Start from current task index (for resume/retry scenarios)
+            int currentTaskIndex = workflowExecution.getCurrentTaskIndex() != null ? 
+                    workflowExecution.getCurrentTaskIndex() : 0;
+            
+            executeTasksSequentially(workflowExecution, taskDefinitions, currentTaskIndex, resultFuture);
+            
+        } catch (Exception e) {
+            log.error("Error in sequential execution strategy", e);
+            resultFuture.complete(WorkflowStatus.FAILED);
+        }
+        
+        return resultFuture;
+    }
+    
+    @Override
+    @Transactional
+    public CompletableFuture<WorkflowStatus> executeSubset(WorkflowExecution workflowExecution, List<Long> taskIds) {
+        CompletableFuture<WorkflowStatus> resultFuture = new CompletableFuture<>();
+        
+        try {
+            WorkflowDefinition definition = workflowExecution.getWorkflowDefinition();
+            
+            // Filter tasks based on provided IDs and maintain order
+            List<TaskDefinition> taskDefinitions = definition.getTasks().stream()
+                    .filter(task -> taskIds.contains(task.getId()))
+                    .sorted((task1, task2) -> task1.getExecutionOrder() - task2.getExecutionOrder())
+                    .toList();
+            
+            if (taskDefinitions.isEmpty()) {
+                resultFuture.complete(WorkflowStatus.COMPLETED);
+                return resultFuture;
+            }
+            
+            executeTasksSequentially(workflowExecution, taskDefinitions, 0, resultFuture);
+            
+        } catch (Exception e) {
+            log.error("Error in sequential subset execution", e);
+            resultFuture.complete(WorkflowStatus.FAILED);
+        }
+        
+        return resultFuture;
+    }
+    
+    private void executeTasksSequentially(WorkflowExecution workflowExecution, 
+                                        List<TaskDefinition> taskDefinitions,
+                                        int startIndex, 
+                                        CompletableFuture<WorkflowStatus> resultFuture) {
+        
+        if (startIndex >= taskDefinitions.size()) {
+            // All tasks completed
+            resultFuture.complete(WorkflowStatus.COMPLETED);
+            return;
+        }
+        
+        // Get current task to execute
+        TaskDefinition taskDefinition = taskDefinitions.get(startIndex);
+        
+        // Prepare inputs from workflow variables
+        Map<String, String> inputs = new HashMap<>(workflowExecution.getVariables());
+        
+        // Create task execution
+        TaskExecution taskExecution = taskExecutionService.createTaskExecution(
+                workflowExecution, taskDefinition, inputs);
+        
+        // Update workflow's current task index
+        workflowExecution.setCurrentTaskIndex(startIndex);
+        workflowExecutionService.save(workflowExecution);
+        
+        // Check if task requires user review
+        if (taskDefinition.isRequireUserReview()) {
+            // Move workflow to await review
+            workflowExecutionService.updateWorkflowExecutionStatus(
+                    workflowExecution.getId(), WorkflowStatus.AWAITING_USER_REVIEW);
+            
+            // Create review point
+            taskExecutionService.createUserReviewPoint(taskExecution.getId());
+            
+            // The workflow execution will be resumed when the review is submitted
+            resultFuture.complete(WorkflowStatus.AWAITING_USER_REVIEW);
+            return;
+        }
+        
+        // Execute the task
+        CompletableFuture<TaskExecution> taskFuture = taskExecutionService.executeTask(taskExecution.getId());
+        
+        taskFuture.whenComplete((completedTask, throwable) -> {
+            try {
+                if (throwable != null) {
+                    handleTaskFailure(workflowExecution, taskExecution, throwable, resultFuture);
+                    return;
+                }
+                
+                // Check task status
+                if (completedTask.getStatus() == TaskStatus.COMPLETED) {
+                    // Update workflow variables with task outputs
+                    Map<String, String> variables = workflowExecution.getVariables();
+                    variables.putAll(completedTask.getOutputs());
+                    workflowExecution.setVariables(variables);
+                    workflowExecutionService.save(workflowExecution);
+                    
+                    // Move to next task
+                    executeTasksSequentially(workflowExecution, taskDefinitions, startIndex + 1, resultFuture);
+                } else if (completedTask.getStatus() == TaskStatus.FAILED) {
+                    handleTaskFailure(workflowExecution, completedTask, 
+                            new TaskExecutionException(completedTask.getErrorMessage()), resultFuture);
+                } else if (completedTask.getStatus() == TaskStatus.AWAITING_RETRY) {
+                    // Task will be retried later, so we wait
+                    resultFuture.complete(WorkflowStatus.RUNNING);
+                } else {
+                    // Other statuses like SKIPPED, CANCELLED, etc.
+                    // Just continue with next task
+                    executeTasksSequentially(workflowExecution, taskDefinitions, startIndex + 1, resultFuture);
+                }
+            } catch (Exception e) {
+                log.error("Error processing task completion", e);
+                resultFuture.complete(WorkflowStatus.FAILED);
+            }
+        });
+    }
+    
+    private void handleTaskFailure(WorkflowExecution workflowExecution, 
+                                  TaskExecution taskExecution,
+                                  Throwable throwable,
+                                  CompletableFuture<WorkflowStatus> resultFuture) {
+        
+        log.error("Task execution failed", throwable);
+        
+        // Check if there's a next task on failure defined
+        TaskDefinition taskDefinition = taskExecution.getTaskDefinition();
+        Long nextTaskOnFailure = taskDefinition.getNextTaskOnFailure();
+        
+        if (nextTaskOnFailure != null) {
+            // Find the index of the next task on failure
+            WorkflowDefinition definition = workflowExecution.getWorkflowDefinition();
+            List<TaskDefinition> taskDefinitions = definition.getTasks();
+            
+            for (int i = 0; i < taskDefinitions.size(); i++) {
+                if (taskDefinitions.get(i).getId().equals(nextTaskOnFailure)) {
+                    // Update error message
+                    workflowExecution.setErrorMessage("Task failed: " + 
+                            (throwable.getMessage() != null ? throwable.getMessage() : "Unknown error"));
+                    workflowExecutionService.save(workflowExecution);
+                    
+                    // Continue with the next task on failure
+                    executeTasksSequentially(workflowExecution, taskDefinitions, i, resultFuture);
+                    return;
+                }
+            }
+        }
+        
+        // No next task on failure defined or not found, fail the workflow
+        workflowExecution.setErrorMessage("Task failed: " + 
+                (throwable.getMessage() != null ? throwable.getMessage() : "Unknown error"));
+        workflowExecutionService.save(workflowExecution);
+        
+        resultFuture.complete(WorkflowStatus.FAILED);
+    }
+}
+```
+
+**ParallelExecutionStrategy.java**
+```java
+package com.example.workfloworchestrator.engine.strategy;
+
+import com.example.workfloworchestrator.exception.TaskExecutionException;
+import com.example.workfloworchestrator.model.*;
+import com.example.workfloworchestrator.service.TaskExecutionService;
+import com.example.workfloworchestrator.service.WorkflowExecutionService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+
+/**
+ * Parallel execution strategy
+ * Executes independent tasks in parallel
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class ParallelExecutionStrategy implements ExecutionStrategy {
+    
+    private final TaskExecutionService taskExecutionService;
+    private final WorkflowExecutionService workflowExecutionService;
+    
+    @Override
+    @Transactional
+    public CompletableFuture<WorkflowStatus> execute(WorkflowExecution workflowExecution) {
+        CompletableFuture<WorkflowStatus> resultFuture = new CompletableFuture<>();
+        
+        try {
+            WorkflowDefinition definition = workflowExecution.getWorkflowDefinition();
+            List<TaskDefinition> taskDefinitions = definition.getTasks();
+            
+            // Group tasks by execution order
+            Map<Integer, List<TaskDefinition>> tasksByOrder = groupTasksByExecutionOrder(taskDefinitions);
+            
+            // Execute groups in sequence, but tasks within groups in parallel
+            executeTaskGroups(workflowExecution, tasksByOrder, resultFuture);
+            
+        } catch (Exception e) {
+            log.error("Error in parallel execution strategy", e);
+            resultFuture.complete(WorkflowStatus.FAILED);
+        }
+        
+        return resultFuture;
+    }
+    
+    @Override
+    @Transactional
+    public CompletableFuture<WorkflowStatus> executeSubset(WorkflowExecution workflowExecution, List<Long> taskIds) {
+        CompletableFuture<WorkflowStatus> resultFuture = new CompletableFuture<>();
+        
+        try {
+            WorkflowDefinition definition = workflowExecution.getWorkflowDefinition();
+            
+            // Filter tasks based on provided IDs
+            List<TaskDefinition> taskDefinitions = definition.getTasks().stream()
+                    .filter(task -> taskIds.contains(task.getId()))
+                    .collect(Collectors.toList());
+            
+            if (taskDefinitions.isEmpty()) {
+                resultFuture.complete(WorkflowStatus.COMPLETED);
+                return resultFuture;
+            }
+            
+            // Group tasks by execution order
+            Map<Integer, List<TaskDefinition>> tasksByOrder = groupTasksByExecutionOrder(taskDefinitions);
+            
+            // Execute groups in sequence, but tasks within groups in parallel
+            executeTaskGroups(workflowExecution, tasksByOrder, resultFuture);
+            
+        } catch (Exception e) {
+            log.error("Error in parallel subset execution", e);
+            resultFuture.complete(WorkflowStatus.FAILED);
+        }
+        
+        return resultFuture;
+    }
+    
+    private Map<Integer, List<TaskDefinition>> groupTasksByExecutionOrder(List<TaskDefinition> taskDefinitions) {
+        Map<Integer, List<TaskDefinition>> tasksByOrder = new TreeMap<>();
+        
+        for (TaskDefinition task : taskDefinitions) {
+            Integer order = task.getExecutionOrder();
+            if (order == null) {
+                order = 0;
+            }
+            
+            tasksByOrder.computeIfAbsent(order, k -> new ArrayList<>()).add(task);
+        }
+        
+        return tasksByOrder;
+    }
+    
+    private void executeTaskGroups(WorkflowExecution workflowExecution, 
+                                 Map<Integer, List<TaskDefinition>> tasksByOrder,
+                                 CompletableFuture<WorkflowStatus> resultFuture) {
+        
+        if (tasksByOrder.isEmpty()) {
+            resultFuture.complete(WorkflowStatus.COMPLETED);
+            return;
+        }
+        
+        // Get the first group of tasks (lowest execution order)
+        Integer firstOrder = tasksByOrder.keySet().iterator().next();
+        List<TaskDefinition> currentGroup = tasksByOrder.remove(firstOrder);
+        
+        // Execute all tasks in the current group in parallel
+        Map<Long, CompletableFuture<TaskExecution>> taskFutures = new ConcurrentHashMap<>();
+        Map<Long, TaskExecution> taskExecutions = new ConcurrentHashMap<>();
+        
+        // Setup synchronized data for collecting outputs
+        Map<String, String> outputCollector = new ConcurrentHashMap<>();
+        
+        // Check if any tasks require user review
+        boolean requiresUserReview = currentGroup.stream().anyMatch(TaskDefinition::isRequireUserReview);
+        
+        if (requiresUserReview) {
+            // Cannot execute in parallel if user review is required
+            log.warn("Tasks requiring user review found in parallel group. Switching to sequential execution for this group.");
+            executeTasksSequentially(workflowExecution, currentGroup, 0, tasksByOrder, resultFuture);
+            return;
+        }
+        
+        for (TaskDefinition taskDefinition : currentGroup) {
+            // Prepare inputs from workflow variables and collected outputs
+            Map<String, String> inputs = new HashMap<>(workflowExecution.getVariables());
+            inputs.putAll(outputCollector);
+            
+            // Create task execution
+            TaskExecution taskExecution = taskExecutionService.createTaskExecution(
+                    workflowExecution, taskDefinition, inputs);
+            
+            taskExecutions.put(taskDefinition.getId(), taskExecution);
+            
+            // Execute the task
+            CompletableFuture<TaskExecution> future = taskExecutionService.executeTask(taskExecution.getId());
+            taskFutures.put(taskDefinition.getId(), future);
+        }
+        
+        // Create a combined future that completes when all tasks are done
+        CompletableFuture<Void> allTasksFuture = CompletableFuture.allOf(
+                taskFutures.values().toArray(new CompletableFuture[0]));
+        
+        // When all tasks are complete
+        allTasksFuture.whenComplete((ignored, throwable) -> {
+            try {
+                if (throwable != null) {
+                    log.error("Error executing task group", throwable);
+                    resultFuture.complete(WorkflowStatus.FAILED);
+                    return;
+                }
+                
+                // Check if any task failed
+                boolean anyFailed = false;
+                List<TaskExecution> completedTasks = new ArrayList<>();
+                
+                for (Map.Entry<Long, CompletableFuture<TaskExecution>> entry : taskFutures.entrySet()) {
+                    try {
+                        TaskExecution taskExecution = entry.getValue().get();
+                        completedTasks.add(taskExecution);
+                        
+                        if (taskExecution.getStatus() == TaskStatus.FAILED) {
+                            anyFailed = true;
+                        } else if (taskExecution.getStatus() == TaskStatus.COMPLETED) {
+                            // Collect outputs for next tasks
+                            outputCollector.putAll(taskExecution.getOutputs());
+                        }
+                    } catch (Exception e) {
+                        anyFailed = true;
+                        log.error("Error getting task result", e);
+                    }
+                }
+                
+                // Handle task failures
+                if (anyFailed) {
+                    // Check if we need to continue with specific error paths
+                    boolean continueOnError = false;
+                    
+                    // Find tasks with next-on-failure paths
+                    for (TaskExecution task : completedTasks) {
+                        if (task.getStatus() == TaskStatus.FAILED && 
+                            task.getTaskDefinition().getNextTaskOnFailure() != null) {
+                            
+                            continueOnError = true;
+                            
+                            // Find the error handler task
+                            Long nextTaskId = task.getTaskDefinition().getNextTaskOnFailure();
+                            TaskDefinition errorHandlerTask = workflowExecution.getWorkflowDefinition().getTasks().stream()
+                                    .filter(t -> t.getId().equals(nextTaskId))
+                                    .findFirst()
+                                    .orElse(null);
+                            
+                            if (errorHandlerTask != null) {
+                                // Create a new map with just this error handler task
+                                Map<Integer, List<TaskDefinition>> errorPath = new HashMap<>();
+                                errorPath.put(0, List.of(errorHandlerTask));
+                                
+                                // Execute the error path
+                                executeTaskGroups(workflowExecution, errorPath, resultFuture);
+                                return;
+                            }
+                        }
+                    }
+                    
+                    if (!continueOnError) {
+                        // No specific error handling, fail the workflow
+                        workflowExecution.setErrorMessage("One or more tasks failed in parallel execution");
+                        workflowExecutionService.save(workflowExecution);
+                        resultFuture.complete(WorkflowStatus.FAILED);
+                        return;
+                    }
+                }
+                
+                // Update workflow variables with collected outputs
+                Map<String, String> variables = workflowExecution.getVariables();
+                variables.putAll(outputCollector);
+                workflowExecution.setVariables(variables);
+                workflowExecutionService.save(workflowExecution);
+                
+                // Continue with next group of tasks
+                executeTaskGroups(workflowExecution, tasksByOrder, resultFuture);
+                
+            } catch (Exception e) {
+                log.error("Error processing task group completion", e);
+                resultFuture.complete(WorkflowStatus.FAILED);
+            }
+        });
+    }
+    
+    // Fallback to sequential execution for groups with user review tasks
+    private void executeTasksSequentially(WorkflowExecution workflowExecution, 
+                                        List<TaskDefinition> tasks,
+                                        int taskIndex,
+                                        Map<Integer, List<TaskDefinition>> remainingGroups,
+                                        CompletableFuture<WorkflowStatus> resultFuture) {
+        
+        if (taskIndex >= tasks.size()) {
+            // All tasks in this group completed, continue with next group
+            executeTaskGroups(workflowExecution, remainingGroups, resultFuture);
+            return;
+        }
+        
+        // Get current task to execute
+        TaskDefinition taskDefinition = tasks.get(taskIndex);
+        
+        // Prepare inputs from workflow variables
+        Map<String, String> inputs = new HashMap<>(workflowExecution.getVariables());
+        
+        // Create task execution
+        TaskExecution taskExecution = taskExecutionService.createTaskExecution(
+                workflowExecution, taskDefinition, inputs);
+        
+        // Check if task requires user review
+        if (taskDefinition.isRequireUserReview()) {
+            // Move workflow to await review
+            workflowExecutionService.updateWorkflowExecutionStatus(
+                    workflowExecution.getId(), WorkflowStatus.AWAITING_USER_REVIEW);
+            
+            // Create review point
+            taskExecutionService.createUserReviewPoint(taskExecution.getId());
+            
+            // The workflow execution will be resumed when the review is submitted
+            resultFuture.complete(WorkflowStatus.AWAITING_USER_REVIEW);
+            return;
+        }
+        
+        // Execute the task
+        CompletableFuture<TaskExecution> taskFuture = taskExecutionService.executeTask(taskExecution.getId());
+        
+        taskFuture.whenComplete((completedTask, throwable) -> {
+            try {
+                if (throwable != null) {
+                    log.error("Task execution failed", throwable);
+                    resultFuture.complete(WorkflowStatus.FAILED);
+                    return;
+                }
+                
+                // Check task status
+                if (completedTask.getStatus() == TaskStatus.COMPLETED) {
+                    // Update workflow variables with task outputs
+                    Map<String, String> variables = workflowExecution.getVariables();
+                    variables.putAll(completedTask.getOutputs());
+                    workflowExecution.setVariables(variables);
+                    workflowExecutionService.save(workflowExecution);
+                    
+                    // Move to next task
+                    executeTasksSequentially(workflowExecution, tasks, taskIndex + 1, remainingGroups, resultFuture);
+                } else if (completedTask.getStatus() == TaskStatus.FAILED) {
+                    // Check if there's a next task on failure
+                    Long nextTaskOnFailure = taskDefinition.getNextTaskOnFailure();
+                    
+                    if (nextTaskOnFailure != null) {
+                        // Find the error handler task
+                        TaskDefinition errorHandlerTask = workflowExecution.getWorkflowDefinition().getTasks().stream()
+                                .filter(t -> t.getId().equals(nextTaskOnFailure))
+                                .findFirst()
+                                .orElse(null);
+                        
+                        if (errorHandlerTask != null) {
+                            // Create a new map with just this error handler task
+                            Map<Integer, List<TaskDefinition>> errorPath = new HashMap<>();
+                            errorPath.put(0, List.of(errorHandlerTask));
+                            
+                            // Execute the error path
+                            executeTaskGroups(workflowExecution, errorPath, resultFuture);
+                            return;
+                        }
+                    }
+                    
+                    // No specific error handling, fail the workflow
+                    workflowExecution.setErrorMessage("Task failed: " + 
+                            (completedTask.getErrorMessage() != null ? completedTask.getErrorMessage() : "Unknown error"));
+                    workflowExecutionService.save(workflowExecution);
+                    resultFuture.complete(WorkflowStatus.FAILED);
+                } else {
+                    // Other statuses like SKIPPED, CANCELLED, etc.
+                    // Just continue with next task
+                    executeTasksSequentially(workflowExecution, tasks, taskIndex + 1, remainingGroups, resultFuture);
+                }
+            } catch (Exception e) {
+                log.error("Error processing task completion", e);
+                resultFuture.complete(WorkflowStatus.FAILED);
+            }
+        });
+    }
+}# Workflow Orchestrator with Spring Boot, Java 21, Gradle, and RabbitMQ
+
+## Project Structure
+
+```
+workflow-orchestrator/
+├── build.gradle
+├── settings.gradle
+├── src/
+    ├── main/
+    │   ├── java/
+    │   │   └── com/
+    │   │       └── example/
+    │   │           └── workfloworchestrator/
+    │   │               ├── WorkflowOrchestratorApplication.java
+    │   │               ├── config/
+    │   │               │   ├── RabbitMQConfig.java
+    │   │               │   └── AsyncConfig.java
+    │   │               ├── model/
+    │   │               │   ├── Workflow.java
+    │   │               │   ├── WorkflowDefinition.java
+    │   │               │   ├── WorkflowVersion.java
+    │   │               │   ├── WorkflowExecution.java
+    │   │               │   ├── WorkflowStatus.java
+    │   │               │   ├── TaskDefinition.java
+    │   │               │   ├── TaskExecution.java
+    │   │               │   ├── TaskStatus.java
+    │   │               │   ├── ExecutionContext.java
+    │   │               │   ├── ExecutionMode.java
+    │   │               │   └── UserReviewPoint.java
+    │   │               ├── repository/
+    │   │               │   ├── WorkflowDefinitionRepository.java
+    │   │               │   ├── WorkflowExecutionRepository.java
+    │   │               │   └── TaskExecutionRepository.java
+    │   │               ├── service/
+    │   │               │   ├── WorkflowService.java
+    │   │               │   ├── WorkflowExecutionService.java
+    │   │               │   ├── TaskExecutionService.java
+    │   │               │   ├── UserReviewService.java
+    │   │               │   └── EventPublisherService.java
+    │   │               ├── engine/
+    │   │               │   ├── WorkflowEngine.java
+    │   │               │   ├── executor/
+    │   │               │   │   ├── TaskExecutor.java
+    │   │               │   │   ├── HttpTaskExecutor.java
+    │   │               │   │   ├── DbTaskExecutor.java
+    │   │               │   │   ├── RabbitMQTaskExecutor.java
+    │   │               │   │   └── CustomTaskExecutor.java
+    │   │               │   ├── scheduler/
+    │   │               │   │   ├── WorkflowScheduler.java
+    │   │               │   │   └── RetryScheduler.java
+    │   │               │   └── strategy/
+    │   │               │       ├── ExecutionStrategy.java
+    │   │               │       ├── SequentialExecutionStrategy.java
+    │   │               │       ├── ParallelExecutionStrategy.java
+    │   │               │       └── ConditionalExecutionStrategy.java
+    │   │               ├── exception/
+    │   │               │   ├── WorkflowException.java
+    │   │               │   └── TaskExecutionException.java
+    │   │               ├── messaging/
+    │   │               │   ├── RabbitMQSender.java
+    │   │               │   ├── RabbitMQReceiver.java
+    │   │               │   └── TaskMessage.java
+    │   │               ├── controller/
+    │   │               │   ├── WorkflowController.java
+    │   │               │   ├── WorkflowExecutionController.java
+    │   │               │   └── UserReviewController.java
+    │   │               └── util/
+    │   │                   ├── WorkflowVersioning.java
+    │   │                   └── RetryUtil.java
+    │   └── resources/
+    │       ├── application.yml
+    │       └── logback-spring.xml
+    └── test/
+        └── java/
+            └── com/
+                └── example/
+                    └── workfloworchestrator/
+                        ├── WorkflowOrchestratorApplicationTests.java
+                        ├── service/
+                        │   ├── WorkflowServiceTest.java
+                        │   └── TaskExecutionServiceTest.java
+                        └── engine/
+                            └── WorkflowEngineTest.java
+```
+
+## Implementation Steps
+
+### 1. Project Setup
+
+**build.gradle**
+```gradle
+plugins {
+    id 'org.springframework.boot' version '3.2.0'
+    id 'io.spring.dependency-management' version '1.1.4'
+    id 'java'
+}
+
+group = 'com.example'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = '21'
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-amqp'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.retry:spring-retry'
+    implementation 'org.apache.httpcomponents.client5:httpclient5:5.2.1'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
+    implementation 'org.flywaydb:flyway-core'
+    
+    compileOnly 'org.projectlombok:lombok'
+    runtimeOnly 'org.postgresql:postgresql'
+    
+    annotationProcessor 'org.projectlombok:lombok'
+    
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.amqp:spring-rabbit-test'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation 'org.testcontainers:rabbitmq'
+    testImplementation 'org.mockito:mockito-core'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+}
+
+test {
+    useJUnitPlatform()
+}
+```
+
+**settings.gradle**
+```gradle
+rootProject.name = 'workflow-orchestrator'
+```
+
+**application.yml**
+```yaml
+spring:
+  application:
+    name: workflow-orchestrator
+  datasource:
+    url: jdbc:postgresql://localhost:5432/workflow_db
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+        
+workflow:
+  task:
+    execution:
+      thread-pool-size: 10
+    retry:
+      max-attempts: 3
+      initial-interval: 1000
+      multiplier: 2.0
+  events:
+    enabled: true
+```
+
+### 2. Core Domain Model
+
+**WorkflowStatus.java**
+```java
+package com.example.workfloworchestrator.model;
+
+public enum WorkflowStatus {
+    CREATED,
+    RUNNING,
+    PAUSED,
+    AWAITING_USER_REVIEW,
+    COMPLETED,
+    FAILED,
+    CANCELLED
+}
+```
+
+**TaskStatus.java**
+```java
+package com.example.workfloworchestrator.model;
+
+public enum TaskStatus {
+    PENDING,
+    RUNNING,
+    COMPLETED,
+    FAILED,
+    SKIPPED,
+    CANCELLED,
+    AWAITING_RETRY
+}
+```
+
+**ExecutionMode.java**
+```java
+package com.example.workfloworchestrator.model;
+
+public enum ExecutionMode {
+    API,
+    RABBITMQ
+}
+```
+
+**WorkflowDefinition.java**
+```java
+package com.example.workfloworchestrator.model;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+@Entity
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Table(name = "workflow_definitions")
+public class WorkflowDefinition {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(nullable = false)
+    private String name;
+    
+    @Column(nullable = false)
+    private String description;
+    
+    @Column(nullable = false)
+    private String version;
+    
+    @Column(name = "created_at", nullable = false)
+    private LocalDateTime createdAt;
+    
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+    
+    @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "workflow_definition_id")
+    private List<TaskDefinition> tasks = new ArrayList<>();
+    
+    @OneToMany(mappedBy = "workflowDefinition")
+    private List<WorkflowExecution> executions = new ArrayList<>();
+    
+    @Column(name = "strategy_type", nullable = false)
+    @Enumerated(EnumType.STRING)
+    private ExecutionStrategyType strategyType = ExecutionStrategyType.SEQUENTIAL;
+    
+    public enum ExecutionStrategyType {
+        SEQUENTIAL,
+        PARALLEL,
+        CONDITIONAL
+    }
+}
+```
+
+**TaskDefinition.java**
+```java
+package com.example.workfloworchestrator.model;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@Entity
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Table(name = "task_definitions")
+public class TaskDefinition {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(nullable = false)
+    private String name;
+    
+    @Column(nullable = false)
+    private String description;
+    
+    @Column(nullable = false)
+    private String type;
+    
+    @Column(name = "execution_order")
+    private Integer executionOrder;
+    
+    @ElementCollection
+    @CollectionTable(name = "task_definition_config", 
+                    joinColumns = @JoinColumn(name = "task_definition_id"))
+    @MapKeyColumn(name = "config_key")
+    @Column(name = "config_value")
+    private Map<String, String> configuration = new HashMap<>();
+    
+    @Column(name = "retry_limit")
+    private Integer retryLimit;
+    
+    @Column(name = "timeout_seconds")
+    private Integer timeoutSeconds;
+    
+    @Column(name = "execution_mode")
+    @Enumerated(EnumType.STRING)
+    private ExecutionMode executionMode = ExecutionMode.API;
+    
+    @Column(name = "require_user_review")
+    private boolean requireUserReview = false;
+    
+    @Column(name = "conditional_expression")
+    private String conditionalExpression;
+    
+    @Column(name = "next_task_on_success")
+    private Long nextTaskOnSuccess;
+    
+    @Column(name = "next_task_on_failure") 
+    private Long nextTaskOnFailure;
+}
+```
+
+**WorkflowExecution.java**
+```java
+package com.example.workfloworchestrator.model;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Entity
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Table(name = "workflow_executions")
+public class WorkflowExecution {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @ManyToOne
+    @JoinColumn(name = "workflow_definition_id", nullable = false)
+    private WorkflowDefinition workflowDefinition;
+    
+    @Column(name = "correlation_id", nullable = false)
+    private String correlationId;
+    
+    @Column(name = "status", nullable = false)
+    @Enumerated(EnumType.STRING)
+    private WorkflowStatus status;
+    
+    @Column(name = "started_at")
+    private LocalDateTime startedAt;
+    
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+    
+    @Column(name = "current_task_index")
+    private Integer currentTaskIndex;
+    
+    @ElementCollection
+    @CollectionTable(name = "workflow_execution_variables", 
+                    joinColumns = @JoinColumn(name = "workflow_execution_id"))
+    @MapKeyColumn(name = "variable_key")
+    @Column(name = "variable_value")
+    private Map<String, String> variables = new HashMap<>();
+    
+    @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "workflow_execution_id")
+    private List<TaskExecution> taskExecutions = new ArrayList<>();
+    
+    @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "workflow_execution_id")
+    private List<UserReviewPoint> reviewPoints = new ArrayList<>();
+    
+    @Column(name = "error_message")
+    private String errorMessage;
+    
+    @Column(name = "retry_count")
+    private Integer retryCount = 0;
+}
+```
+
+**TaskExecution.java**
+```java
+package com.example.workfloworchestrator.model;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+
+@Entity
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Table(name = "task_executions")
+public class TaskExecution {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @ManyToOne
+    @JoinColumn(name = "task_definition_id", nullable = false)
+    private TaskDefinition taskDefinition;
+    
+    @Column(name = "status", nullable = false)
+    @Enumerated(EnumType.STRING)
+    private TaskStatus status;
+    
+    @Column(name = "started_at")
+    private LocalDateTime startedAt;
+    
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+    
+    @Column(name = "execution_mode")
+    @Enumerated(EnumType.STRING)
+    private ExecutionMode executionMode;
+    
+    @ElementCollection
+    @CollectionTable(name = "task_execution_inputs", 
+                    joinColumns = @JoinColumn(name = "task_execution_id"))
+    @MapKeyColumn(name = "input_key")
+    @Column(name = "input_value")
+    private Map<String, String> inputs = new HashMap<>();
+    
+    @ElementCollection
+    @CollectionTable(name = "task_execution_outputs", 
+                    joinColumns = @JoinColumn(name = "task_execution_id"))
+    @MapKeyColumn(name = "output_key")
+    @Column(name = "output_value")
+    private Map<String, String> outputs = new HashMap<>();
+    
+    @Column(name = "error_message")
+    private String errorMessage;
+    
+    @Column(name = "retry_count")
+    private Integer retryCount = 0;
+    
+    @Column(name = "next_retry_at")
+    private LocalDateTime nextRetryAt;
+}
+```
+
+**UserReviewPoint.java**
+```java
+package com.example.workfloworchestrator.model;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Table(name = "user_review_points")
+public class UserReviewPoint {
+    
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(name = "task_execution_id")
+    private Long taskExecutionId;
+    
+    @Column(name = "created_at", nullable = false)
+    private LocalDateTime createdAt;
+    
+    @Column(name = "reviewed_at")
+    private LocalDateTime reviewedAt;
+    
+    @Column(name = "reviewer")
+    private String reviewer;
+    
+    @Column(name = "comment")
+    private String comment;
+    
+    @Column(name = "decision")
+    @Enumerated(EnumType.STRING)
+    private ReviewDecision decision;
+    
+    public enum ReviewDecision {
+        APPROVE,
+        REJECT,
+        RESTART
+    }
+}
+```
+
+**ExecutionContext.java**
+```java
+package com.example.workfloworchestrator.model;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class ExecutionContext {
+    private Map<String, Object> variables = new HashMap<>();
+    
+    public void setVariable(String key, Object value) {
+        variables.put(key, value);
+    }
+    
+    public Object getVariable(String key) {
+        return variables.get(key);
+    }
+    
+    public <T> T getVariable(String key, Class<T> type) {
+        Object value = variables.get(key);
+        if (value != null && type.isAssignableFrom(value.getClass())) {
+            return type.cast(value);
+        }
+        return null;
+    }
+    
+    public boolean hasVariable(String key) {
+        return variables.containsKey(key);
+    }
+    
+    public void removeVariable(String key) {
+        variables.remove(key);
+    }
+    
+    public void clearVariables() {
+        variables.clear();
+    }
+    
+    public Map<String, Object> getAllVariables() {
+        return new HashMap<>(variables);
+    }
+}
+```
+
+### 3. Repositories
+
+**WorkflowDefinitionRepository.java**
+```java
+package com.example.workfloworchestrator.repository;
+
+import com.example.workfloworchestrator.model.WorkflowDefinition;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface WorkflowDefinitionRepository extends JpaRepository<WorkflowDefinition, Long> {
+    
+    Optional<WorkflowDefinition> findByNameAndVersion(String name, String version);
+    
+    List<WorkflowDefinition> findByNameOrderByVersionDesc(String name);
+    
+    Optional<WorkflowDefinition> findFirstByNameOrderByCreatedAtDesc(String name);
+}
+```
+
+**WorkflowExecutionRepository.java**
+```java
+package com.example.workfloworchestrator.repository;
+
+import com.example.workfloworchestrator.model.WorkflowExecution;
+import com.example.workfloworchestrator.model.WorkflowStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface WorkflowExecutionRepository extends JpaRepository<WorkflowExecution, Long> {
+    
+    Optional<WorkflowExecution> findByCorrelationId(String correlationId);
+    
+    List<WorkflowExecution> findByStatus(WorkflowStatus status);
+    
+    List<WorkflowExecution> findByWorkflowDefinitionId(Long workflowDefinitionId);
+    
+    @Query("SELECT we FROM WorkflowExecution we WHERE we.status = :status AND we.startedAt < :before")
+    List<WorkflowExecution> findStuckExecutions(WorkflowStatus status, LocalDateTime before);
+}
+```
+
+**TaskExecutionRepository.java**
+```java
+package com.example.workfloworchestrator.repository;
+
+import com.example.workfloworchestrator.model.TaskExecution;
+import com.example.workfloworchestrator.model.TaskStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Repository
+public interface TaskExecutionRepository extends JpaRepository<TaskExecution, Long> {
+    
+    List<TaskExecution> findByWorkflowExecutionIdOrderByTaskDefinitionExecutionOrderAsc(Long workflowExecutionId);
+    
+    @Query("SELECT te FROM TaskExecution te WHERE te.status = :status AND te.nextRetryAt <= :now")
+    List<TaskExecution> findTasksToRetry(TaskStatus status, LocalDateTime now);
+}
+```
+
+### 4. Configuration
+
+**AsyncConfig.java**
+```java
+package com.example.workfloworchestrator.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+
+import java.util.concurrent.Executor;
+
+@Configuration
+@EnableAsync
+public class AsyncConfig {
+    
+    @Value("${workflow.task.execution.thread-pool-size:10}")
+    private int threadPoolSize;
+    
+    @Bean(name = "taskExecutor")
+    public Executor taskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(threadPoolSize);
+        executor.setMaxPoolSize(threadPoolSize);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("workflow-task-");
+        executor.initialize();
+        return executor;
+    }
+}
+```
+
+**RabbitMQConfig.java**
+```java
+package com.example.workfloworchestrator.config;
+
+import org.springframework.amqp.core.*;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class RabbitMQConfig {
+    
+    public static final String TASK_QUEUE = "workflow.task.queue";
+    public static final String TASK_EXCHANGE = "workflow.task.exchange";
+    public static final String TASK_ROUTING_KEY = "workflow.task.routing.key";
+    
+    public static final String WORKFLOW_RESULT_QUEUE = "workflow.result.queue";
+    public static final String WORKFLOW_RESULT_EXCHANGE = "workflow.result.exchange";
+    public static final String WORKFLOW_RESULT_ROUTING_KEY = "workflow.result.routing.key";
+    
+    @Bean
+    public Queue taskQueue() {
+        return new Queue(TASK_QUEUE, true);
+    }
+    
+    @Bean
+    public Queue resultQueue() {
+        return new Queue(WORKFLOW_RESULT_QUEUE, true);
+    }
+    
+    @Bean
+    public TopicExchange taskExchange() {
+        return new TopicExchange(TASK_EXCHANGE);
+    }
+    
+    @Bean
+    public TopicExchange resultExchange() {
+        return new TopicExchange(WORKFLOW_RESULT_EXCHANGE);
+    }
+    
+    @Bean
+    public Binding taskBinding(Queue taskQueue, TopicExchange taskExchange) {
+        return BindingBuilder.bind(taskQueue).to(taskExchange).with(TASK_ROUTING_KEY);
+    }
+    
+    @Bean
+    public Binding resultBinding(Queue resultQueue, TopicExchange resultExchange) {
+        return BindingBuilder.bind(resultQueue).to(resultExchange).with(WORKFLOW_RESULT_ROUTING_KEY);
+    }
+    
+    @Bean
+    public MessageConverter jsonMessageConverter() {
+        return new Jackson2JsonMessageConverter();
+    }
+    
+    @Bean
+    public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory) {
+        final RabbitTemplate rabbitTemplate = new RabbitTemplate(connectionFactory);
+        rabbitTemplate.setMessageConverter(jsonMessageConverter());
+        return rabbitTemplate;
+    }
+}
+```
+
+### 5. Services
+
+Let's implement the core services for the workflow orchestrator.
+
+**WorkflowService.java**
+```java
+package com.example.workfloworchestrator.service;
+
+import com.example.workfloworchestrator.exception.WorkflowException;
+import com.example.workfloworchestrator.model.TaskDefinition;
+import com.example.workfloworchestrator.model.WorkflowDefinition;
+import com.example.workfloworchestrator.repository.WorkflowDefinitionRepository;
+import com.example.workfloworchestrator.util.WorkflowVersioning;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class WorkflowService {
+    
+    private final WorkflowDefinitionRepository workflowDefinitionRepository;
+    private final WorkflowVersioning workflowVersioning;
+    
+    @Transactional(readOnly = true)
+    public List<WorkflowDefinition> getAllWorkflowDefinitions() {
+        return workflowDefinitionRepository.findAll();
+    }
+    
+    @Transactional(readOnly = true)
+    public Optional<WorkflowDefinition> getWorkflowDefinition(Long id) {
+        return workflowDefinitionRepository.findById(id);
+    }
+    
+    @Transactional(readOnly = true)
+    public Optional<WorkflowDefinition> getLatestWorkflowDefinition(String name) {
+        return workflowDefinitionRepository.findFirstByNameOrderByCreatedAtDesc(name);
+    }
+    
+    @Transactional(readOnly = true)
+    public Optional<WorkflowDefinition> getWorkflowDefinition(String name, String version) {
+        return workflowDefinitionRepository.findByNameAndVersion(name, version);
+    }
+    
+    @Transactional
+    public WorkflowDefinition createWorkflowDefinition(WorkflowDefinition workflowDefinition) {
+        // Set default values
+        workflowDefinition.setCreatedAt(LocalDateTime.now());
+        
+        // Generate version if not provided
+        if (workflowDefinition.getVersion() == null || workflowDefinition.getVersion().isEmpty()) {
+            String version = workflowVersioning.generateNextVersion(workflowDefinition.getName());
+            workflowDefinition.setVersion(version);
+        }
+        
+        // Set execution order for tasks if not already set
+        List<TaskDefinition> tasks = workflowDefinition.getTasks();
+        for (int i = 0; i < tasks.size(); i++) {
+            TaskDefinition task = tasks.get(i);
+            if (task.getExecutionOrder() == null) {
+                task.setExecutionOrder(i);
+            }
+        }
+        
+        return workflowDefinitionRepository.save(workflowDefinition);
+    }
+    
+    @Transactional
+    public WorkflowDefinition updateWorkflowDefinition(Long id, WorkflowDefinition updatedWorkflow) {
+        return workflowDefinitionRepository.findById(id)
+                .map(existingWorkflow -> {
+                    // Create a new version instead of updating the existing one
+                    WorkflowDefinition newVersion = new WorkflowDefinition();
+                    newVersion.setName(existingWorkflow.getName());
+                    newVersion.setDescription(updatedWorkflow.getDescription());
+                    newVersion.setTasks(updatedWorkflow.getTasks());
+                    newVersion.setStrategyType(updatedWorkflow.getStrategyType());
+                    newVersion.setCreatedAt(LocalDateTime.now());
+                    
+                    // Generate new version
+                    String newVersionNumber = workflowVersioning.generateNextVersion(existingWorkflow.getName());
+                    newVersion.setVersion(newVersionNumber);
+                    
+                    return workflowDefinitionRepository.save(newVersion);
+                })
+                .orElseThrow(() -> new WorkflowException("Workflow definition not found with id: " + id));
+    }
+    
+    @Transactional
+    public void deleteWorkflowDefinition(Long id) {
+        workflowDefinitionRepository.deleteById(id);
+    }
+}
+```
+
+**WorkflowExecutionService.java**
+```java
+package com.example.workfloworchestrator.service;
+
+import com.example.workfloworchestrator.engine.WorkflowEngine;
+import com.example.workfloworchestrator.exception.WorkflowException;
+import com.example.workfloworchestrator.model.*;
+import com.example.workfloworchestrator.repository.WorkflowExecutionRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.*;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class WorkflowExecutionService {
+    
+    private final WorkflowService workflowService;
+    private final WorkflowExecutionRepository workflowExecutionRepository;
+    private final WorkflowEngine workflowEngine;
+    private final EventPublisherService eventPublisherService;
+    
+    @Transactional
+    public WorkflowExecution startWorkflow(String workflowName, String version, Map<String, String> variables) {
+        WorkflowDefinition workflowDefinition = getWorkflowDefinition(workflowName, version);
+        
+        // Create workflow execution
+        WorkflowExecution execution = createWorkflowExecution(workflowDefinition, variables);
+        
+        // Start the workflow
+        workflowEngine.executeWorkflow(execution.getId());
+        
+        return execution;
+    }
+    
+    @Transactional
+    public WorkflowExecution createWorkflowExecution(WorkflowDefinition workflowDefinition, Map<String, String> variables) {
+        WorkflowExecution execution = new WorkflowExecution();
+        execution.setWorkflowDefinition(workflowDefinition);
+        execution.setCorrelationId(UUID.randomUUID().toString());
+        execution.setStatus(WorkflowStatus.CREATED);
+        execution.setStartedAt(LocalDateTime.now());
+        execution.setCurrentTaskIndex(0);
+        execution.setRetryCount(0);
+        
+        if (variables != null) {
+            execution.setVariables(variables);
+        }
+        
+        return workflowExecutionRepository.save(execution);
+    }
+    
+    private WorkflowDefinition getWorkflowDefinition(String name, String version) {
+        if (version != null && !version.isEmpty()) {
+            return workflowService.getWorkflowDefinition(name, version)
+                    .orElseThrow(() -> new WorkflowException("Workflow definition not found with name: " + name + " and version: " + version));
+        } else {
+            return workflowService.getLatestWorkflowDefinition(name)
+                    .orElseThrow(() -> new WorkflowException("Workflow definition not found with name: " + name));
+        }
+    }
+    
+    @Transactional
+    public WorkflowExecution getWorkflowExecution(Long id) {
+        return workflowExecutionRepository.findById(id)
+                .orElseThrow(() -> new WorkflowException("Workflow execution not found with id: " + id));
+    }
+    
+    @Transactional
+    public WorkflowExecution getWorkflowExecutionByCorrelationId(String correlationId) {
+        return workflowExecutionRepository.findByCorrelationId(correlationId)
+                .orElseThrow(() -> new WorkflowException("Workflow execution not found with correlationId: " + correlationId));
+    }
+    
+    @Transactional
+    public WorkflowExecution updateWorkflowExecutionStatus(Long id, WorkflowStatus status) {
+        WorkflowExecution execution = getWorkflowExecution(id);
+        execution.setStatus(status);
+        
+        if (status == WorkflowStatus.COMPLETED || status == WorkflowStatus.FAILED) {
+            execution.setCompletedAt(LocalDateTime.now());
+        }
+        
+        // Publish event for status change
+        eventPublisherService.publishWorkflowStatusChangedEvent(execution);
+        
+        return workflowExecutionRepository.save(execution);
+    }
+    
+    @Transactional
+    public WorkflowExecution pauseWorkflowExecution(Long id) {
+        WorkflowExecution execution = getWorkflowExecution(id);
+        
+        if (execution.getStatus() == WorkflowStatus.RUNNING) {
+            execution.setStatus(WorkflowStatus.PAUSED);
+            workflowExecutionRepository.save(execution);
+            
+            eventPublisherService.publishWorkflowPausedEvent(execution);
+        }
+        
+        return execution;
+    }
+    
+    @Transactional
+    public WorkflowExecution resumeWorkflowExecution(Long id) {
+        WorkflowExecution execution = getWorkflowExecution(id);
+        
+        if (execution.getStatus() == WorkflowStatus.PAUSED) {
+            execution.setStatus(WorkflowStatus.RUNNING);
+            workflowExecutionRepository.save(execution);
+            
+            // Continue execution
+            workflowEngine.executeWorkflow(id);
+            
+            eventPublisherService.publishWorkflowResumedEvent(execution);
+        }
+        
+        return execution;
+    }
+    
+    @Transactional
+    public WorkflowExecution cancelWorkflowExecution(Long id) {
+        WorkflowExecution execution = getWorkflowExecution(id);
+        
+        if (execution.getStatus() != WorkflowStatus.COMPLETED && 
+            execution.getStatus() != WorkflowStatus.FAILED &&
+            execution.getStatus() != WorkflowStatus.CANCELLED) {
+            
+            execution.setStatus(WorkflowStatus.CANCELLED);
+            execution.setCompletedAt(LocalDateTime.now());
+            workflowExecutionRepository.save(execution);
+            
+            eventPublisherService.publishWorkflowCancelledEvent(execution);
+        }
+        
+        return execution;
+    }
+    
+    @Transactional
+    public WorkflowExecution retryWorkflowExecution(Long id) {
+        WorkflowExecution execution = getWorkflowExecution(id);
+        
+        if (execution.getStatus() == WorkflowStatus.FAILED) {
+            execution.setStatus(WorkflowStatus.RUNNING);
+            execution.setRetryCount(execution.getRetryCount() + 1);
+            workflowExecutionRepository.save(execution);
+            
+            // Continue execution from failed task
+            workflowEngine.executeWorkflow(id);
+            
+            eventPublisherService.publishWorkflowRetryEvent(execution);
+        }
+        
+        return execution;
+    }
+    
+    @Transactional(readOnly = true)
+    public List<WorkflowExecution> getWorkflowExecutionsByStatus(WorkflowStatus status) {
+        return workflowExecutionRepository.findByStatus(status);
+    }
+    
+    @Transactional(readOnly = true)
+    public List<WorkflowExecution> getStuckWorkflowExecutions(LocalDateTime before) {
+        return workflowExecutionRepository.findStuckExecutions(WorkflowStatus.RUNNING, before);
+    }
+}
