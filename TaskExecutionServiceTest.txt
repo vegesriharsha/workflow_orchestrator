@@ -1,0 +1,383 @@
+package com.example.workfloworchestrator.service;
+
+import com.example.workfloworchestrator.engine.executor.TaskExecutor;
+import com.example.workfloworchestrator.exception.TaskExecutionException;
+import com.example.workfloworchestrator.messaging.RabbitMQSender;
+import com.example.workfloworchestrator.messaging.TaskMessage;
+import com.example.workfloworchestrator.model.*;
+import com.example.workfloworchestrator.repository.TaskExecutionRepository;
+import com.example.workfloworchestrator.util.RetryUtil;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+public class TaskExecutionServiceTest {
+    
+    @Mock
+    private TaskExecutionRepository taskExecutionRepository;
+    
+    @Mock
+    private WorkflowExecutionService workflowExecutionService;
+    
+    @Mock
+    private Map<String, TaskExecutor> taskExecutors;
+    
+    @Mock
+    private TaskExecutor mockTaskExecutor;
+    
+    @Mock
+    private RabbitMQSender rabbitMQSender;
+    
+    @Mock
+    private EventPublisherService eventPublisherService;
+    
+    @Mock
+    private RetryUtil retryUtil;
+    
+    @InjectMocks
+    private TaskExecutionService taskExecutionService;
+    
+    @Captor
+    private ArgumentCaptor<TaskExecution> taskExecutionCaptor;
+    
+    @Captor
+    private ArgumentCaptor<TaskMessage> taskMessageCaptor;
+    
+    private WorkflowExecution sampleWorkflowExecution;
+    private TaskDefinition sampleTaskDefinition;
+    private TaskExecution sampleTaskExecution;
+    private ExecutionContext sampleContext;
+    
+    @BeforeEach
+    void setUp() {
+        // Create sample workflow execution
+        sampleWorkflowExecution = new WorkflowExecution();
+        sampleWorkflowExecution.setId(1L);
+        sampleWorkflowExecution.setStatus(WorkflowStatus.RUNNING);
+        
+        // Create sample task definition
+        sampleTaskDefinition = new TaskDefinition();
+        sampleTaskDefinition.setId(1L);
+        sampleTaskDefinition.setName("sample-task");
+        sampleTaskDefinition.setType("http");
+        sampleTaskDefinition.setExecutionOrder(0);
+        sampleTaskDefinition.setRetryLimit(3);
+        sampleTaskDefinition.setConfiguration(Map.of("url", "https://example.com", "method", "GET"));
+        
+        // Create sample task execution
+        sampleTaskExecution = new TaskExecution();
+        sampleTaskExecution.setId(1L);
+        sampleTaskExecution.setTaskDefinition(sampleTaskDefinition);
+        sampleTaskExecution.setWorkflowExecutionId(sampleWorkflowExecution.getId());
+        sampleTaskExecution.setStatus(TaskStatus.PENDING);
+        sampleTaskExecution.setExecutionMode(ExecutionMode.API);
+        sampleTaskExecution.setInputs(Map.of("param1", "value1"));
+        sampleTaskExecution.setOutputs(new HashMap<>());
+        sampleTaskExecution.setRetryCount(0);
+        
+        // Create sample execution context
+        sampleContext = new ExecutionContext();
+        sampleContext.setVariable("param1", "value1");
+    }
+    
+    @Test
+    void createTaskExecution_ShouldCreateAndSaveTaskExecution() {
+        // Arrange
+        Map<String, String> inputs = Map.of("param1", "value1");
+        
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        
+        // Act
+        TaskExecution result = taskExecutionService.createTaskExecution(sampleWorkflowExecution, sampleTaskDefinition, inputs);
+        
+        // Assert
+        assertNotNull(result);
+        assertEquals(sampleTaskDefinition, result.getTaskDefinition());
+        assertEquals(TaskStatus.PENDING, result.getStatus());
+        assertEquals(inputs, result.getInputs());
+        assertEquals(0, result.getRetryCount());
+        verify(taskExecutionRepository).save(any(TaskExecution.class));
+        verify(eventPublisherService).publishTaskCreatedEvent(sampleWorkflowExecution, sampleTaskExecution);
+    }
+    
+    @Test
+    void executeTask_ViaApi_ShouldExecuteAndUpdateStatus() throws Exception {
+        // Arrange
+        Map<String, Object> executionResult = Map.of("key1", "value1", "success", true);
+        
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        when(taskExecutors.get("http")).thenReturn(mockTaskExecutor);
+        when(mockTaskExecutor.execute(any(TaskDefinition.class), any(ExecutionContext.class)))
+                .thenReturn(executionResult);
+        
+        // Act
+        CompletableFuture<TaskExecution> future = taskExecutionService.executeTask(1L);
+        TaskExecution result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(TaskStatus.COMPLETED, result.getStatus());
+        assertNotNull(result.getStartedAt());
+        assertNotNull(result.getCompletedAt());
+        assertFalse(result.getOutputs().isEmpty());
+        verify(taskExecutionRepository).findById(1L);
+        verify(taskExecutionRepository, times(2)).save(any(TaskExecution.class));
+        verify(taskExecutors).get("http");
+        verify(mockTaskExecutor).execute(any(TaskDefinition.class), any(ExecutionContext.class));
+        verify(eventPublisherService).publishTaskStartedEvent(any(TaskExecution.class));
+        verify(eventPublisherService).publishTaskCompletedEvent(any(TaskExecution.class));
+    }
+    
+    @Test
+    void executeTask_ViaRabbitMQ_ShouldSendMessageToQueue() throws Exception {
+        // Arrange
+        sampleTaskExecution.setExecutionMode(ExecutionMode.RABBITMQ);
+        
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        doNothing().when(rabbitMQSender).sendTaskMessage(any(TaskMessage.class));
+        
+        // Act
+        CompletableFuture<TaskExecution> future = taskExecutionService.executeTask(1L);
+        TaskExecution result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(TaskStatus.RUNNING, result.getStatus());
+        assertNotNull(result.getStartedAt());
+        verify(taskExecutionRepository).findById(1L);
+        verify(taskExecutionRepository).save(any(TaskExecution.class));
+        verify(rabbitMQSender).sendTaskMessage(any(TaskMessage.class));
+        verify(eventPublisherService).publishTaskStartedEvent(any(TaskExecution.class));
+    }
+    
+    @Test
+    void executeTask_WithTaskExecutorException_ShouldHandleErrorAndFailTask() throws Exception {
+        // Arrange
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        when(taskExecutors.get("http")).thenReturn(mockTaskExecutor);
+        when(mockTaskExecutor.execute(any(TaskDefinition.class), any(ExecutionContext.class)))
+                .thenThrow(new TaskExecutionException("Test error"));
+        when(retryUtil.calculateNextRetryTime(anyInt())).thenReturn(LocalDateTime.now().plusMinutes(5));
+        
+        // Act
+        CompletableFuture<TaskExecution> future = taskExecutionService.executeTask(1L);
+        TaskExecution result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(TaskStatus.AWAITING_RETRY, result.getStatus());
+        assertEquals(1, result.getRetryCount());
+        assertNotNull(result.getNextRetryAt());
+        assertEquals("Test error", result.getErrorMessage());
+        verify(taskExecutionRepository).findById(1L);
+        verify(taskExecutionRepository, times(2)).save(any(TaskExecution.class));
+        verify(taskExecutors).get("http");
+        verify(mockTaskExecutor).execute(any(TaskDefinition.class), any(ExecutionContext.class));
+        verify(eventPublisherService).publishTaskStartedEvent(any(TaskExecution.class));
+        verify(eventPublisherService).publishTaskRetryScheduledEvent(any(TaskExecution.class));
+    }
+    
+    @Test
+    void completeTaskExecution_ShouldUpdateStatusAndPublishEvent() {
+        // Arrange
+        Map<String, String> outputs = Map.of("result", "success");
+        
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        
+        // Act
+        TaskExecution result = taskExecutionService.completeTaskExecution(1L, outputs);
+        
+        // Assert
+        assertEquals(TaskStatus.COMPLETED, result.getStatus());
+        assertNotNull(result.getCompletedAt());
+        assertEquals(outputs, result.getOutputs());
+        verify(taskExecutionRepository).findById(1L);
+        verify(taskExecutionRepository).save(taskExecutionCaptor.capture());
+        verify(eventPublisherService).publishTaskCompletedEvent(any(TaskExecution.class));
+        
+        TaskExecution savedTask = taskExecutionCaptor.getValue();
+        assertEquals(TaskStatus.COMPLETED, savedTask.getStatus());
+        assertEquals(outputs, savedTask.getOutputs());
+    }
+    
+    @Test
+    void failTaskExecution_WithinRetryLimit_ShouldScheduleRetry() {
+        // Arrange
+        String errorMessage = "Test error message";
+        LocalDateTime nextRetry = LocalDateTime.now().plusMinutes(5);
+        
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        when(retryUtil.calculateNextRetryTime(anyInt())).thenReturn(nextRetry);
+        
+        // Act
+        TaskExecution result = taskExecutionService.failTaskExecution(1L, errorMessage);
+        
+        // Assert
+        assertEquals(TaskStatus.AWAITING_RETRY, result.getStatus());
+        assertEquals(errorMessage, result.getErrorMessage());
+        assertEquals(1, result.getRetryCount());
+        assertEquals(nextRetry, result.getNextRetryAt());
+        verify(taskExecutionRepository).findById(1L);
+        verify(taskExecutionRepository).save(taskExecutionCaptor.capture());
+        verify(eventPublisherService).publishTaskRetryScheduledEvent(any(TaskExecution.class));
+        
+        TaskExecution savedTask = taskExecutionCaptor.getValue();
+        assertEquals(TaskStatus.AWAITING_RETRY, savedTask.getStatus());
+        assertEquals(1, savedTask.getRetryCount());
+    }
+    
+    @Test
+    void failTaskExecution_ExceedingRetryLimit_ShouldMarkAsFailed() {
+        // Arrange
+        String errorMessage = "Test error message";
+        sampleTaskExecution.setRetryCount(3); // Already at retry limit
+        
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        
+        // Act
+        TaskExecution result = taskExecutionService.failTaskExecution(1L, errorMessage);
+        
+        // Assert
+        assertEquals(TaskStatus.FAILED, result.getStatus());
+        assertEquals(errorMessage, result.getErrorMessage());
+        assertNotNull(result.getCompletedAt());
+        verify(taskExecutionRepository).findById(1L);
+        verify(taskExecutionRepository).save(taskExecutionCaptor.capture());
+        verify(eventPublisherService).publishTaskFailedEvent(any(TaskExecution.class));
+        
+        TaskExecution savedTask = taskExecutionCaptor.getValue();
+        assertEquals(TaskStatus.FAILED, savedTask.getStatus());
+        assertNotNull(savedTask.getCompletedAt());
+    }
+    
+    @Test
+    void skipTaskExecution_ShouldUpdateStatusAndPublishEvent() {
+        // Arrange
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        
+        // Act
+        TaskExecution result = taskExecutionService.skipTaskExecution(1L);
+        
+        // Assert
+        assertEquals(TaskStatus.SKIPPED, result.getStatus());
+        assertNotNull(result.getCompletedAt());
+        verify(taskExecutionRepository).findById(1L);
+        verify(taskExecutionRepository).save(taskExecutionCaptor.capture());
+        verify(eventPublisherService).publishTaskSkippedEvent(any(TaskExecution.class));
+        
+        TaskExecution savedTask = taskExecutionCaptor.getValue();
+        assertEquals(TaskStatus.SKIPPED, savedTask.getStatus());
+        assertNotNull(savedTask.getCompletedAt());
+    }
+    
+    @Test
+    void getTaskExecutionsForWorkflow_ShouldReturnTasksInOrder() {
+        // Arrange
+        when(taskExecutionRepository.findByWorkflowExecutionIdOrderByTaskDefinitionExecutionOrderAsc(1L))
+                .thenReturn(List.of(sampleTaskExecution));
+        
+        // Act
+        List<TaskExecution> results = taskExecutionService.getTaskExecutionsForWorkflow(1L);
+        
+        // Assert
+        assertEquals(1, results.size());
+        assertEquals(sampleTaskExecution, results.get(0));
+        verify(taskExecutionRepository).findByWorkflowExecutionIdOrderByTaskDefinitionExecutionOrderAsc(1L);
+    }
+    
+    @Test
+    void getTasksToRetry_ShouldReturnTasksReadyForRetry() {
+        // Arrange
+        LocalDateTime now = LocalDateTime.now();
+        
+        when(taskExecutionRepository.findTasksToRetry(eq(TaskStatus.AWAITING_RETRY), any(LocalDateTime.class)))
+                .thenReturn(List.of(sampleTaskExecution));
+        
+        // Act
+        List<TaskExecution> results = taskExecutionService.getTasksToRetry(now);
+        
+        // Assert
+        assertEquals(1, results.size());
+        assertEquals(sampleTaskExecution, results.get(0));
+        verify(taskExecutionRepository).findTasksToRetry(eq(TaskStatus.AWAITING_RETRY), any(LocalDateTime.class));
+    }
+    
+    @Test
+    void getTaskExecution_WithValidId_ShouldReturnTask() {
+        // Arrange
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        
+        // Act
+        TaskExecution result = taskExecutionService.getTaskExecution(1L);
+        
+        // Assert
+        assertEquals(sampleTaskExecution, result);
+        verify(taskExecutionRepository).findById(1L);
+    }
+    
+    @Test
+    void getTaskExecution_WithInvalidId_ShouldThrowException() {
+        // Arrange
+        when(taskExecutionRepository.findById(999L)).thenReturn(java.util.Optional.empty());
+        
+        // Act & Assert
+        TaskExecutionException exception = assertThrows(TaskExecutionException.class, () -> {
+            taskExecutionService.getTaskExecution(999L);
+        });
+        
+        assertTrue(exception.getMessage().contains("Task execution not found"));
+        verify(taskExecutionRepository).findById(999L);
+    }
+    
+    @Test
+    void saveTaskExecution_ShouldSaveAndReturnTask() {
+        // Arrange
+        when(taskExecutionRepository.save(any(TaskExecution.class))).thenReturn(sampleTaskExecution);
+        
+        // Act
+        TaskExecution result = taskExecutionService.saveTaskExecution(sampleTaskExecution);
+        
+        // Assert
+        assertEquals(sampleTaskExecution, result);
+        verify(taskExecutionRepository).save(sampleTaskExecution);
+    }
+    
+    @Test
+    void createUserReviewPoint_ShouldCreateReviewPoint() {
+        // Arrange
+        when(taskExecutionRepository.findById(1L)).thenReturn(java.util.Optional.of(sampleTaskExecution));
+        when(workflowExecutionService.getWorkflowExecution(1L)).thenReturn(sampleWorkflowExecution);
+        
+        // Act
+        UserReviewPoint result = taskExecutionService.createUserReviewPoint(1L);
+        
+        // Assert
+        assertNotNull(result);
+        assertEquals(1L, result.getTaskExecutionId());
+        assertNotNull(result.getCreatedAt());
+        verify(taskExecutionRepository).findById(1L);
+        verify(workflowExecutionService).getWorkflowExecution(1L);
+        verify(workflowExecutionService).save(sampleWorkflowExecution);
+        verify(eventPublisherService).publishUserReviewRequestedEvent(eq(sampleWorkflowExecution), any(UserReviewPoint.class));
+    }
+}

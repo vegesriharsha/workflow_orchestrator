@@ -1,0 +1,285 @@
+package com.example.workfloworchestrator.service;
+
+import com.example.workfloworchestrator.engine.WorkflowEngine;
+import com.example.workfloworchestrator.exception.WorkflowException;
+import com.example.workfloworchestrator.model.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+public class UserReviewServiceTest {
+    
+    @Mock
+    private WorkflowExecutionService workflowExecutionService;
+    
+    @Mock
+    private TaskExecutionService taskExecutionService;
+    
+    @Mock
+    private WorkflowEngine workflowEngine;
+    
+    @Mock
+    private EventPublisherService eventPublisherService;
+    
+    @InjectMocks
+    private UserReviewService userReviewService;
+    
+    private WorkflowExecution workflowExecution;
+    private TaskExecution taskExecution;
+    private UserReviewPoint reviewPoint;
+    
+    @BeforeEach
+    void setUp() {
+        // Create task definition
+        TaskDefinition taskDefinition = new TaskDefinition();
+        taskDefinition.setId(1L);
+        taskDefinition.setName("Task1");
+        taskDefinition.setType("http");
+        taskDefinition.setRequireUserReview(true);
+        
+        // Create workflow definition
+        WorkflowDefinition workflowDefinition = new WorkflowDefinition();
+        workflowDefinition.setId(1L);
+        workflowDefinition.setName("Test Workflow");
+        workflowDefinition.setVersion("1.0.0");
+        
+        // Create task execution
+        taskExecution = new TaskExecution();
+        taskExecution.setId(1L);
+        taskExecution.setTaskDefinition(taskDefinition);
+        taskExecution.setWorkflowExecutionId(1L);
+        taskExecution.setStatus(TaskStatus.PENDING);
+        taskExecution.setInputs(Map.of("param1", "value1"));
+        taskExecution.setOutputs(new HashMap<>());
+        
+        // Create review point
+        reviewPoint = new UserReviewPoint();
+        reviewPoint.setId(1L);
+        reviewPoint.setTaskExecutionId(taskExecution.getId());
+        reviewPoint.setCreatedAt(LocalDateTime.now());
+        
+        // Create workflow execution
+        workflowExecution = new WorkflowExecution();
+        workflowExecution.setId(1L);
+        workflowExecution.setWorkflowDefinition(workflowDefinition);
+        workflowExecution.setStatus(WorkflowStatus.AWAITING_USER_REVIEW);
+        workflowExecution.setReviewPoints(new ArrayList<>());
+        workflowExecution.getReviewPoints().add(reviewPoint);
+    }
+    
+    @Test
+    void createUserReviewPoint_ShouldCreateReviewPointAndUpdateWorkflow() {
+        // Arrange
+        when(taskExecutionService.getTaskExecution(1L)).thenReturn(taskExecution);
+        when(workflowExecutionService.getWorkflowExecution(1L)).thenReturn(workflowExecution);
+        doNothing().when(eventPublisherService).publishUserReviewRequestedEvent(any(), any());
+        
+        // Act
+        UserReviewPoint result = userReviewService.createUserReviewPoint(1L);
+        
+        // Assert
+        assertNotNull(result);
+        assertEquals(1L, result.getTaskExecutionId());
+        assertNotNull(result.getCreatedAt());
+        
+        verify(taskExecutionService).getTaskExecution(1L);
+        verify(workflowExecutionService).getWorkflowExecution(1L);
+        verify(workflowExecutionService).updateWorkflowExecutionStatus(1L, WorkflowStatus.AWAITING_USER_REVIEW);
+        verify(workflowExecutionService).save(workflowExecution);
+        verify(eventPublisherService).publishUserReviewRequestedEvent(workflowExecution, result);
+    }
+    
+    @Test
+    void submitUserReview_Approve_ShouldCompleteTaskAndContinueWorkflow() {
+        // Arrange
+        List<WorkflowExecution> allWorkflows = List.of(workflowExecution);
+        
+        when(workflowExecutionService.getAllWorkflowExecutions()).thenReturn(allWorkflows);
+        when(taskExecutionService.getTaskExecution(1L)).thenReturn(taskExecution);
+        
+        // Act
+        WorkflowExecution result = userReviewService.submitUserReview(
+                1L, 
+                UserReviewPoint.ReviewDecision.APPROVE, 
+                "john.doe", 
+                "Approved");
+        
+        // Assert
+        assertNotNull(result);
+        verify(workflowExecutionService).getAllWorkflowExecutions();
+        verify(taskExecutionService).getTaskExecution(1L);
+        verify(taskExecutionService).completeTaskExecution(taskExecution.getId(), taskExecution.getOutputs());
+        verify(workflowExecutionService).updateWorkflowExecutionStatus(1L, WorkflowStatus.RUNNING);
+        verify(workflowEngine).executeWorkflow(1L);
+        verify(eventPublisherService).publishUserReviewCompletedEvent(workflowExecution, reviewPoint);
+        
+        assertEquals(UserReviewPoint.ReviewDecision.APPROVE, reviewPoint.getDecision());
+        assertEquals("john.doe", reviewPoint.getReviewer());
+        assertEquals("Approved", reviewPoint.getComment());
+        assertNotNull(reviewPoint.getReviewedAt());
+    }
+    
+    @Test
+    void submitUserReview_Reject_ShouldFailTaskAndContinueWorkflow() {
+        // Arrange
+        List<WorkflowExecution> allWorkflows = List.of(workflowExecution);
+        
+        when(workflowExecutionService.getAllWorkflowExecutions()).thenReturn(allWorkflows);
+        when(taskExecutionService.getTaskExecution(1L)).thenReturn(taskExecution);
+        
+        // Act
+        WorkflowExecution result = userReviewService.submitUserReview(
+                1L, 
+                UserReviewPoint.ReviewDecision.REJECT, 
+                "jane.doe", 
+                "Rejected due to invalid data");
+        
+        // Assert
+        assertNotNull(result);
+        verify(workflowExecutionService).getAllWorkflowExecutions();
+        verify(taskExecutionService).getTaskExecution(1L);
+        verify(taskExecutionService).failTaskExecution(eq(taskExecution.getId()), contains("Rejected by user"));
+        verify(workflowExecutionService).updateWorkflowExecutionStatus(1L, WorkflowStatus.RUNNING);
+        verify(workflowEngine).executeWorkflow(1L);
+        verify(eventPublisherService).publishUserReviewCompletedEvent(workflowExecution, reviewPoint);
+        
+        assertEquals(UserReviewPoint.ReviewDecision.REJECT, reviewPoint.getDecision());
+        assertEquals("jane.doe", reviewPoint.getReviewer());
+        assertEquals("Rejected due to invalid data", reviewPoint.getComment());
+        assertNotNull(reviewPoint.getReviewedAt());
+    }
+    
+    @Test
+    void submitUserReview_Restart_ShouldRestartTask() {
+        // Arrange
+        List<WorkflowExecution> allWorkflows = List.of(workflowExecution);
+        
+        when(workflowExecutionService.getAllWorkflowExecutions()).thenReturn(allWorkflows);
+        when(taskExecutionService.getTaskExecution(1L)).thenReturn(taskExecution);
+        
+        // Act
+        WorkflowExecution result = userReviewService.submitUserReview(
+                1L, 
+                UserReviewPoint.ReviewDecision.RESTART, 
+                "admin.user", 
+                "Restart with corrected parameters");
+        
+        // Assert
+        assertNotNull(result);
+        verify(workflowExecutionService).getAllWorkflowExecutions();
+        verify(taskExecutionService).getTaskExecution(1L);
+        verify(workflowExecutionService).updateWorkflowExecutionStatus(1L, WorkflowStatus.RUNNING);
+        verify(workflowEngine).restartTask(1L, taskExecution.getId());
+        verify(eventPublisherService).publishUserReviewCompletedEvent(workflowExecution, reviewPoint);
+        
+        assertEquals(UserReviewPoint.ReviewDecision.RESTART, reviewPoint.getDecision());
+        assertEquals("admin.user", reviewPoint.getReviewer());
+        assertEquals("Restart with corrected parameters", reviewPoint.getComment());
+        assertNotNull(reviewPoint.getReviewedAt());
+    }
+    
+    @Test
+    void submitUserReview_ReviewPointNotFound_ShouldThrowException() {
+        // Arrange
+        Long nonExistentReviewPointId = 999L;
+        List<WorkflowExecution> allWorkflows = List.of(workflowExecution);
+        
+        when(workflowExecutionService.getAllWorkflowExecutions()).thenReturn(allWorkflows);
+        
+        // Act & Assert
+        WorkflowException exception = assertThrows(WorkflowException.class, () -> {
+            userReviewService.submitUserReview(
+                    nonExistentReviewPointId, 
+                    UserReviewPoint.ReviewDecision.APPROVE, 
+                    "john.doe", 
+                    "Approved");
+        });
+        
+        assertTrue(exception.getMessage().contains("Review point not found"));
+        verify(workflowExecutionService).getAllWorkflowExecutions();
+        verify(taskExecutionService, never()).getTaskExecution(anyLong());
+        verify(workflowEngine, never()).executeWorkflow(anyLong());
+    }
+    
+    @Test
+    void submitUserReview_WorkflowNotFound_ShouldThrowException() {
+        // Arrange
+        Long reviewPointId = 1L;
+        List<WorkflowExecution> emptyWorkflows = List.of();
+        
+        when(workflowExecutionService.getAllWorkflowExecutions()).thenReturn(emptyWorkflows);
+        
+        // Act & Assert
+        WorkflowException exception = assertThrows(WorkflowException.class, () -> {
+            userReviewService.submitUserReview(
+                    reviewPointId, 
+                    UserReviewPoint.ReviewDecision.APPROVE, 
+                    "john.doe", 
+                    "Approved");
+        });
+        
+        assertTrue(exception.getMessage().contains("No workflow execution found for review point"));
+        verify(workflowExecutionService).getAllWorkflowExecutions();
+        verify(taskExecutionService, never()).getTaskExecution(anyLong());
+        verify(workflowEngine, never()).executeWorkflow(anyLong());
+    }
+    
+    @Test
+    void getPendingReviewPoints_ShouldReturnPendingReviews() {
+        // Arrange
+        List<WorkflowExecution> workflowsAwaitingReview = List.of(workflowExecution);
+        
+        when(workflowExecutionService.getWorkflowExecutionsByStatus(WorkflowStatus.AWAITING_USER_REVIEW))
+                .thenReturn(workflowsAwaitingReview);
+        
+        // Act
+        List<UserReviewPoint> pendingReviews = userReviewService.getPendingReviewPoints();
+        
+        // Assert
+        assertEquals(1, pendingReviews.size());
+        assertEquals(reviewPoint, pendingReviews.get(0));
+        verify(workflowExecutionService).getWorkflowExecutionsByStatus(WorkflowStatus.AWAITING_USER_REVIEW);
+    }
+    
+    @Test
+    void getPendingReviewPoints_WithCompletedReviews_ShouldFilterOutCompletedReviews() {
+        // Arrange
+        // Add a completed review point
+        UserReviewPoint completedReview = new UserReviewPoint();
+        completedReview.setId(2L);
+        completedReview.setTaskExecutionId(2L);
+        completedReview.setCreatedAt(LocalDateTime.now().minusHours(1));
+        completedReview.setReviewedAt(LocalDateTime.now()); // Has review time, so it's completed
+        completedReview.setReviewer("jane.doe");
+        completedReview.setDecision(UserReviewPoint.ReviewDecision.APPROVE);
+        
+        workflowExecution.getReviewPoints().add(completedReview);
+        
+        List<WorkflowExecution> workflowsAwaitingReview = List.of(workflowExecution);
+        
+        when(workflowExecutionService.getWorkflowExecutionsByStatus(WorkflowStatus.AWAITING_USER_REVIEW))
+                .thenReturn(workflowsAwaitingReview);
+        
+        // Act
+        List<UserReviewPoint> pendingReviews = userReviewService.getPendingReviewPoints();
+        
+        // Assert
+        assertEquals(1, pendingReviews.size());
+        assertEquals(reviewPoint, pendingReviews.get(0)); // Only the pending review is returned
+        verify(workflowExecutionService).getWorkflowExecutionsByStatus(WorkflowStatus.AWAITING_USER_REVIEW);
+    }
+}

@@ -1,0 +1,313 @@
+package com.example.workfloworchestrator.engine.strategy;
+
+import com.example.workfloworchestrator.model.*;
+import com.example.workfloworchestrator.service.TaskExecutionService;
+import com.example.workfloworchestrator.service.WorkflowExecutionService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+public class SequentialExecutionStrategyTest {
+    
+    @Mock
+    private TaskExecutionService taskExecutionService;
+    
+    @Mock
+    private WorkflowExecutionService workflowExecutionService;
+    
+    @InjectMocks
+    private SequentialExecutionStrategy strategy;
+    
+    private WorkflowDefinition workflowDefinition;
+    private WorkflowExecution workflowExecution;
+    private List<TaskDefinition> taskDefinitions;
+    private List<TaskExecution> taskExecutions;
+    
+    @BeforeEach
+    void setUp() {
+        // Create task definitions
+        taskDefinitions = new ArrayList<>();
+        
+        TaskDefinition task1 = new TaskDefinition();
+        task1.setId(1L);
+        task1.setName("Task 1");
+        task1.setType("http");
+        task1.setExecutionOrder(0);
+        
+        TaskDefinition task2 = new TaskDefinition();
+        task2.setId(2L);
+        task2.setName("Task 2");
+        task2.setType("custom");
+        task2.setExecutionOrder(1);
+        
+        taskDefinitions.add(task1);
+        taskDefinitions.add(task2);
+        
+        // Create workflow definition
+        workflowDefinition = new WorkflowDefinition();
+        workflowDefinition.setId(1L);
+        workflowDefinition.setName("Test Workflow");
+        workflowDefinition.setVersion("1.0.0");
+        workflowDefinition.setTasks(taskDefinitions);
+        
+        // Create workflow execution
+        workflowExecution = new WorkflowExecution();
+        workflowExecution.setId(1L);
+        workflowExecution.setWorkflowDefinition(workflowDefinition);
+        workflowExecution.setStatus(WorkflowStatus.RUNNING);
+        workflowExecution.setStartedAt(LocalDateTime.now());
+        workflowExecution.setVariables(new HashMap<>());
+        workflowExecution.setCurrentTaskIndex(0);
+        
+        // Create task executions
+        taskExecutions = new ArrayList<>();
+        
+        TaskExecution taskExec1 = new TaskExecution();
+        taskExec1.setId(1L);
+        taskExec1.setTaskDefinition(task1);
+        taskExec1.setWorkflowExecutionId(workflowExecution.getId());
+        taskExec1.setStatus(TaskStatus.PENDING);
+        
+        TaskExecution taskExec2 = new TaskExecution();
+        taskExec2.setId(2L);
+        taskExec2.setTaskDefinition(task2);
+        taskExec2.setWorkflowExecutionId(workflowExecution.getId());
+        taskExec2.setStatus(TaskStatus.PENDING);
+        
+        taskExecutions.add(taskExec1);
+        taskExecutions.add(taskExec2);
+    }
+    
+    @Test
+    void execute_AllTasksSuccessful_ShouldCompleteWorkflow() throws ExecutionException, InterruptedException {
+        // Arrange
+        TaskExecution task1Execution = taskExecutions.get(0);
+        TaskExecution task2Execution = taskExecutions.get(1);
+        
+        // Mock task creation
+        when(taskExecutionService.createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(0)), anyMap()))
+                .thenReturn(task1Execution);
+        when(taskExecutionService.createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(1)), anyMap()))
+                .thenReturn(task2Execution);
+        
+        // Mock task execution - both tasks complete successfully
+        when(taskExecutionService.executeTask(task1Execution.getId()))
+                .thenAnswer(invocation -> {
+                    task1Execution.setStatus(TaskStatus.COMPLETED);
+                    task1Execution.setOutputs(Map.of("result1", "value1"));
+                    return CompletableFuture.completedFuture(task1Execution);
+                });
+        
+        when(taskExecutionService.executeTask(task2Execution.getId()))
+                .thenAnswer(invocation -> {
+                    task2Execution.setStatus(TaskStatus.COMPLETED);
+                    task2Execution.setOutputs(Map.of("result2", "value2"));
+                    return CompletableFuture.completedFuture(task2Execution);
+                });
+        
+        // Act
+        CompletableFuture<WorkflowStatus> future = strategy.execute(workflowExecution);
+        WorkflowStatus result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(WorkflowStatus.COMPLETED, result);
+        verify(taskExecutionService).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(0)), anyMap());
+        verify(taskExecutionService).executeTask(task1Execution.getId());
+        verify(taskExecutionService).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(1)), anyMap());
+        verify(taskExecutionService).executeTask(task2Execution.getId());
+        verify(workflowExecutionService).save(workflowExecution);
+    }
+    
+    @Test
+    void execute_FirstTaskFails_ShouldFailWorkflow() throws ExecutionException, InterruptedException {
+        // Arrange
+        TaskExecution task1Execution = taskExecutions.get(0);
+        
+        // Mock task creation
+        when(taskExecutionService.createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(0)), anyMap()))
+                .thenReturn(task1Execution);
+        
+        // Mock task execution - first task fails
+        when(taskExecutionService.executeTask(task1Execution.getId()))
+                .thenAnswer(invocation -> {
+                    task1Execution.setStatus(TaskStatus.FAILED);
+                    task1Execution.setErrorMessage("Test error");
+                    return CompletableFuture.completedFuture(task1Execution);
+                });
+        
+        // Act
+        CompletableFuture<WorkflowStatus> future = strategy.execute(workflowExecution);
+        WorkflowStatus result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(WorkflowStatus.FAILED, result);
+        verify(taskExecutionService).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(0)), anyMap());
+        verify(taskExecutionService).executeTask(task1Execution.getId());
+        verify(taskExecutionService, never()).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(1)), anyMap());
+        verify(workflowExecutionService).save(workflowExecution);
+        
+        // Verify error message was set on workflow
+        verify(workflowExecution).setErrorMessage(contains("Test error"));
+    }
+    
+    @Test
+    void execute_TaskAwaitingRetry_ShouldReturnRunningStatus() throws ExecutionException, InterruptedException {
+        // Arrange
+        TaskExecution task1Execution = taskExecutions.get(0);
+        
+        // Mock task creation
+        when(taskExecutionService.createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(0)), anyMap()))
+                .thenReturn(task1Execution);
+        
+        // Mock task execution - first task awaits retry
+        when(taskExecutionService.executeTask(task1Execution.getId()))
+                .thenAnswer(invocation -> {
+                    task1Execution.setStatus(TaskStatus.AWAITING_RETRY);
+                    task1Execution.setErrorMessage("Temporary error");
+                    task1Execution.setNextRetryAt(LocalDateTime.now().plusMinutes(5));
+                    return CompletableFuture.completedFuture(task1Execution);
+                });
+        
+        // Act
+        CompletableFuture<WorkflowStatus> future = strategy.execute(workflowExecution);
+        WorkflowStatus result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(WorkflowStatus.RUNNING, result);
+        verify(taskExecutionService).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(0)), anyMap());
+        verify(taskExecutionService).executeTask(task1Execution.getId());
+        verify(taskExecutionService, never()).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(1)), anyMap());
+    }
+    
+    @Test
+    void execute_UserReviewRequired_ShouldReturnAwaitingUserReviewStatus() throws ExecutionException, InterruptedException {
+        // Arrange
+        TaskExecution task1Execution = taskExecutions.get(0);
+        TaskDefinition task1Definition = taskDefinitions.get(0);
+        task1Definition.setRequireUserReview(true);
+        
+        // Mock task creation
+        when(taskExecutionService.createTaskExecution(eq(workflowExecution), eq(task1Definition), anyMap()))
+                .thenReturn(task1Execution);
+        
+        // Mock user review point creation
+        when(taskExecutionService.createUserReviewPoint(task1Execution.getId()))
+                .thenReturn(new UserReviewPoint());
+        
+        // Act
+        CompletableFuture<WorkflowStatus> future = strategy.execute(workflowExecution);
+        WorkflowStatus result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(WorkflowStatus.AWAITING_USER_REVIEW, result);
+        verify(taskExecutionService).createTaskExecution(eq(workflowExecution), eq(task1Definition), anyMap());
+        verify(taskExecutionService).createUserReviewPoint(task1Execution.getId());
+        verify(taskExecutionService, never()).executeTask(task1Execution.getId());
+    }
+    
+    @Test
+    void executeSubset_SpecificTasks_ShouldOnlyExecuteSelectedTasks() throws ExecutionException, InterruptedException {
+        // Arrange
+        List<Long> taskIds = List.of(2L); // Only second task
+        TaskExecution task2Execution = taskExecutions.get(1);
+        
+        // Mock task creation
+        when(taskExecutionService.createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(1)), anyMap()))
+                .thenReturn(task2Execution);
+        
+        // Mock task execution - successful
+        when(taskExecutionService.executeTask(task2Execution.getId()))
+                .thenAnswer(invocation -> {
+                    task2Execution.setStatus(TaskStatus.COMPLETED);
+                    task2Execution.setOutputs(Map.of("result2", "value2"));
+                    return CompletableFuture.completedFuture(task2Execution);
+                });
+        
+        // Act
+        CompletableFuture<WorkflowStatus> future = strategy.executeSubset(workflowExecution, taskIds);
+        WorkflowStatus result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(WorkflowStatus.COMPLETED, result);
+        verify(taskExecutionService, never()).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(0)), anyMap());
+        verify(taskExecutionService).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(1)), anyMap());
+        verify(taskExecutionService).executeTask(task2Execution.getId());
+        verify(workflowExecutionService).save(workflowExecution);
+    }
+    
+    @Test
+    void executeSubset_EmptyTaskList_ShouldCompleteImmediately() throws ExecutionException, InterruptedException {
+        // Arrange
+        List<Long> taskIds = List.of(); // No tasks
+        
+        // Act
+        CompletableFuture<WorkflowStatus> future = strategy.executeSubset(workflowExecution, taskIds);
+        WorkflowStatus result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(WorkflowStatus.COMPLETED, result);
+        verify(taskExecutionService, never()).createTaskExecution(any(), any(), anyMap());
+        verify(taskExecutionService, never()).executeTask(anyLong());
+    }
+    
+    @Test
+    void execute_TaskWithNextTaskOnFailure_ShouldFollowFailurePath() throws ExecutionException, InterruptedException {
+        // Arrange
+        TaskExecution task1Execution = taskExecutions.get(0);
+        TaskExecution task2Execution = taskExecutions.get(1);
+        
+        // Set up next task on failure path
+        TaskDefinition task1Definition = taskDefinitions.get(0);
+        task1Definition.setNextTaskOnFailure(2L); // Task 2 is the error handler for Task 1
+        
+        // Mock task creation
+        when(taskExecutionService.createTaskExecution(eq(workflowExecution), eq(task1Definition), anyMap()))
+                .thenReturn(task1Execution);
+        when(taskExecutionService.createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(1)), anyMap()))
+                .thenReturn(task2Execution);
+        
+        // Mock task execution - first task fails, second succeeds
+        when(taskExecutionService.executeTask(task1Execution.getId()))
+                .thenAnswer(invocation -> {
+                    task1Execution.setStatus(TaskStatus.FAILED);
+                    task1Execution.setErrorMessage("Expected failure");
+                    return CompletableFuture.completedFuture(task1Execution);
+                });
+        
+        when(taskExecutionService.executeTask(task2Execution.getId()))
+                .thenAnswer(invocation -> {
+                    task2Execution.setStatus(TaskStatus.COMPLETED);
+                    task2Execution.setOutputs(Map.of("errorHandler", "completed"));
+                    return CompletableFuture.completedFuture(task2Execution);
+                });
+        
+        // Act
+        CompletableFuture<WorkflowStatus> future = strategy.execute(workflowExecution);
+        WorkflowStatus result = future.get(); // Wait for completion
+        
+        // Assert
+        assertEquals(WorkflowStatus.COMPLETED, result);
+        verify(taskExecutionService).createTaskExecution(eq(workflowExecution), eq(task1Definition), anyMap());
+        verify(taskExecutionService).executeTask(task1Execution.getId());
+        verify(taskExecutionService).createTaskExecution(eq(workflowExecution), eq(taskDefinitions.get(1)), anyMap());
+        verify(taskExecutionService).executeTask(task2Execution.getId());
+        verify(workflowExecution).setErrorMessage(contains("Expected failure"));
+        verify(workflowExecutionService, times(2)).save(workflowExecution);
+    }
+}
